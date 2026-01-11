@@ -22,16 +22,18 @@ export default function App() {
     setQuestions(data || [])
   }
 
-  // --- ADMIN LOGIC ---
+  // --- ADMIN: LOGIN ---
   const handleAdminLogin = () => {
+    // CHANGE THIS PASSWORD IF YOU WANT
     const password = prompt("Enter Admin Password:")
-    if (password === "@Nextmove7388##===") { // <--- YOUR SECRET PASSWORD
+    if (password === "TargetUP2026") { 
       setIsAdmin(true)
     } else {
       alert("Wrong password!")
     }
   }
 
+  // --- ADMIN: ADD QUESTION ---
   const handleAddQuestion = async () => {
     if (!newQ.text || !newQ.opA) return alert("Please fill all fields")
 
@@ -41,16 +43,31 @@ export default function App() {
       correct_option: newQ.correct,
       subject: newQ.subject,
       difficulty: newQ.difficulty,
-      chapter: 'General' // Default chapter
+      chapter: 'General'
     }])
 
     if (error) {
       alert("Error: " + error.message)
     } else {
       alert("Question Added! 🚀")
-      setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', subject: 'GK', difficulty: 'Easy' }) // Reset form
-      getQuestions() // Refresh list
-      setIsAdmin(false) // Go back to quiz mode
+      setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', subject: 'GK', difficulty: 'Easy' }) 
+      getQuestions() 
+      setIsAdmin(false) 
+    }
+  }
+
+  // --- ADMIN: DELETE QUESTION (NEW!) ---
+  const handleDelete = async (id) => {
+    const confirmDelete = window.confirm("Are you sure you want to delete this question?")
+    if (!confirmDelete) return
+
+    const { error } = await supabase.from('questions').delete().eq('id', id)
+    
+    if (error) {
+      alert("Error deleting: " + error.message)
+    } else {
+      // Remove it from the screen immediately
+      setQuestions(questions.filter(q => q.id !== id))
     }
   }
 
@@ -76,13 +93,13 @@ export default function App() {
           <p className="text-gray-400 text-sm">Practice like a Pro.</p>
         </div>
         
-        {/* SECRET ADMIN BUTTON */}
-        <button onClick={handleAdminLogin} className="text-gray-600 hover:text-white transition">
-          🔒
+        {/* LOCK ICON */}
+        <button onClick={handleAdminLogin} className="text-gray-600 hover:text-white transition text-2xl">
+          {isAdmin ? '🔓' : '🔒'}
         </button>
       </div>
 
-      {/* --- ADMIN PANEL (Only shows if password correct) --- */}
+      {/* --- ADMIN PANEL --- */}
       {isAdmin ? (
         <div className="bg-gray-800 p-6 rounded-xl border border-yellow-500 mb-8 animation-fade-in">
           <h2 className="text-xl font-bold mb-4 text-yellow-400">Add New Question</h2>
@@ -123,7 +140,7 @@ export default function App() {
               🚀 Publish Question
             </button>
             <button onClick={() => setIsAdmin(false)} className="text-gray-400 text-sm mt-2 text-center">
-              Cancel
+              Exit Admin Mode
             </button>
           </div>
         </div>
@@ -146,8 +163,20 @@ export default function App() {
               const userAnswer = selectedAnswers[q.id];
               const isAnswered = userAnswer != null;
               return (
-                <div key={q.id} className="bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-md">
-                   <div className="flex justify-between items-start mb-4">
+                <div key={q.id} className="relative bg-gray-800 p-6 rounded-xl border border-gray-700 shadow-md group">
+                   
+                   {/* DELETE BUTTON (Only visible if Admin) */}
+                   {isAdmin && (
+                     <button 
+                       onClick={() => handleDelete(q.id)}
+                       className="absolute top-4 right-4 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded transition"
+                       title="Delete Question"
+                     >
+                       🗑️
+                     </button>
+                   )}
+
+                   <div className="flex justify-between items-start mb-4 pr-10">
                     <span className="text-xs font-bold bg-blue-900 text-blue-200 px-2 py-1 rounded uppercase">{q.subject}</span>
                     <span className={`text-xs px-2 py-1 rounded border ${q.difficulty === 'Easy' ? 'border-green-500 text-green-400' : 'border-orange-500 text-orange-400'}`}>{q.difficulty}</span>
                   </div>
@@ -180,4 +209,3 @@ export default function App() {
     </div>
   )
 }
-// Update Admin Mode V2
