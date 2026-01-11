@@ -14,7 +14,10 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false) 
   const [showAddQForm, setShowAddQForm] = useState(false) 
   const [showExamManager, setShowExamManager] = useState(false)
-  const [editingId, setEditingId] = useState(null)
+  
+  // Track what we are editing
+  const [editingQId, setEditingQId] = useState(null)
+  const [editingExamId, setEditingExamId] = useState(null)
   const fileInputRef = useRef(null)
 
   // --- FORMS ---
@@ -22,7 +25,8 @@ export default function App() {
     text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', difficulty: 'Easy'
   })
   
-  const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null })
+  // Added 'existingIcon' to keep track of old image during edit
+  const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null, existingIcon: '' })
 
   useEffect(() => {
     const storedLogin = localStorage.getItem('targetup_admin_logged_in')
@@ -42,42 +46,82 @@ export default function App() {
     setQuestions(data || [])
   }
 
-  // --- ADMIN: ADD/EDIT EXAM ---
+  // --- ADMIN: EXAM MANAGEMENT (ADD / EDIT / DELETE) ---
+  
+  // 1. PREPARE EDIT
+  const handleEditExamClick = (e, exam) => {
+    e.stopPropagation() // Stop the click from opening the exam
+    setEditingExamId(exam.id)
+    setNewExam({
+      name: exam.name,
+      subjects: exam.subjects.join(', '), // Convert Array to String
+      iconFile: null,
+      existingIcon: exam.icon_url
+    })
+    setShowExamManager(true)
+  }
+
+  // 2. SAVE (INSERT OR UPDATE)
   const handleSaveExam = async () => {
     if (!newExam.name || !newExam.subjects) return alert("Enter Name and Subjects!")
     
-    let iconUrl = 'https://placehold.co/100?text=Ex' // Default
+    let iconUrl = newExam.existingIcon || 'https://placehold.co/100?text=Ex' 
     
-    // Upload Image if selected
+    // Upload New Image (If selected)
     if (newExam.iconFile) {
       const fileName = `${Date.now()}-${newExam.iconFile.name}`
-      const { data, error } = await supabase.storage.from('exam-icons').upload(fileName, newExam.iconFile)
-      if (error) return alert("Image upload failed: " + error.message)
+      const { error: uploadError } = await supabase.storage.from('exam-icons').upload(fileName, newExam.iconFile)
+      if (uploadError) return alert("Image upload failed: " + uploadError.message)
       
-      // Get Public URL
       const { data: publicUrl } = supabase.storage.from('exam-icons').getPublicUrl(fileName)
       iconUrl = publicUrl.publicUrl
     }
 
-    // Save to DB (Subjects are comma separated string -> convert to array)
     const subjectArray = newExam.subjects.split(',').map(s => s.trim())
     
-    const { error } = await supabase.from('exams').insert([{
-      name: newExam.name,
-      subjects: subjectArray,
-      icon_url: iconUrl
-    }])
-
-    if (error) alert("Error: " + error.message)
-    else {
-      alert("Exam Created! 🎉")
-      setNewExam({ name: '', subjects: '', iconFile: null })
-      fetchExams()
-      setShowExamManager(false)
+    if (editingExamId) {
+      // UPDATE
+      const { error } = await supabase.from('exams').update({
+        name: newExam.name,
+        subjects: subjectArray,
+        icon_url: iconUrl
+      }).eq('id', editingExamId)
+      
+      if (error) alert("Error: " + error.message)
+      else alert("Exam Updated! ✅")
+    } else {
+      // CREATE
+      const { error } = await supabase.from('exams').insert([{
+        name: newExam.name,
+        subjects: subjectArray,
+        icon_url: iconUrl
+      }])
+      
+      if (error) alert("Error: " + error.message)
+      else alert("Exam Created! 🎉")
     }
+
+    setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' })
+    setEditingExamId(null)
+    setShowExamManager(false)
+    fetchExams()
   }
 
-  // --- ADMIN: ADD/EDIT QUESTION ---
+  // 3. DELETE EXAM
+  const handleDeleteExam = async (e, id) => {
+    e.stopPropagation()
+    if (!window.confirm("⚠️ Delete this Exam? This will delete ALL questions inside it too.")) return
+    
+    // First delete questions linked to this exam (Optional safety, or Supabase might block it)
+    await supabase.from('questions').delete().eq('exam_id', id)
+    
+    // Then delete exam
+    const { error } = await supabase.from('exams').delete().eq('id', id)
+    if (error) alert("Error: " + error.message)
+    else fetchExams()
+  }
+
+  // --- ADMIN: QUESTION MANAGEMENT ---
   const handleSaveQuestion = async () => {
     if (!newQ.text || !newQ.opA || !newQ.exam_id) return alert("Fill all fields & Select Exam!")
 
@@ -90,8 +134,8 @@ export default function App() {
       difficulty: newQ.difficulty
     }
 
-    if (editingId) {
-      await supabase.from('questions').update(questionData).eq('id', editingId)
+    if (editingQId) {
+      await supabase.from('questions').update(questionData).eq('id', editingQId)
       alert("Updated! ✅")
     } else {
       await supabase.from('questions').insert([questionData])
@@ -115,7 +159,12 @@ export default function App() {
   }
   const resetQForm = () => {
     setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', difficulty: 'Easy' })
-    setEditingId(null); setShowAddQForm(false)
+    setEditingQId(null); setShowAddQForm(false)
+  }
+  const resetExamForm = () => {
+    setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' })
+    setEditingExamId(null)
+    setShowExamManager(false)
   }
 
   // --- RENDER ---
@@ -132,7 +181,7 @@ export default function App() {
         </div>
         {isAdmin ? (
           <div className="flex gap-2">
-            <button onClick={() => setShowExamManager(true)} className="bg-purple-100 text-purple-700 px-3 py-1 rounded text-xs font-bold border border-purple-200">Manage Exams</button>
+            <button onClick={() => { resetExamForm(); setShowExamManager(true) }} className="bg-purple-100 text-purple-700 px-3 py-1 rounded text-xs font-bold border border-purple-200">Exams</button>
             <button onClick={() => setShowAddQForm(true)} className="bg-blue-600 text-white px-3 py-1 rounded text-sm font-bold shadow">+ Q</button>
             <button onClick={() => {setIsAdmin(false); localStorage.removeItem('targetup_admin_logged_in')}} className="text-red-500 text-xs border border-red-200 px-2 py-1 rounded">Exit</button>
           </div>
@@ -141,12 +190,14 @@ export default function App() {
         )}
       </div>
 
-      {/* --- POPUP 1: EXAM MANAGER (ADD NEW EXAM) --- */}
+      {/* --- POPUP 1: EXAM MANAGER (ADD / EDIT) --- */}
       {isAdmin && showExamManager && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-xl p-6 relative">
-            <button onClick={() => setShowExamManager(false)} className="absolute top-4 right-4 text-gray-400">✕</button>
-            <h2 className="text-lg font-bold mb-4 text-purple-700">Add New Exam Category</h2>
+            <button onClick={resetExamForm} className="absolute top-4 right-4 text-gray-400">✕</button>
+            <h2 className="text-lg font-bold mb-4 text-purple-700">
+              {editingExamId ? 'Edit Exam' : 'Add New Exam'}
+            </h2>
             
             <div className="space-y-4">
               <div>
@@ -160,27 +211,29 @@ export default function App() {
                   value={newExam.subjects} onChange={e => setNewExam({...newExam, subjects: e.target.value})} />
               </div>
               <div>
-                <label className="text-xs text-gray-500 font-bold">Upload Icon</label>
+                <label className="text-xs text-gray-500 font-bold">
+                  {editingExamId ? 'Change Icon (Optional)' : 'Upload Icon'}
+                </label>
                 <input type="file" ref={fileInputRef} className="w-full text-sm" 
                   onChange={e => setNewExam({...newExam, iconFile: e.target.files[0]})} />
+                {newExam.existingIcon && !newExam.iconFile && <p className="text-xs text-green-600 mt-1">✓ Using current icon</p>}
               </div>
               <button onClick={handleSaveExam} className="w-full bg-purple-600 text-white py-3 rounded font-bold hover:bg-purple-700">
-                Create Exam 🏛️
+                {editingExamId ? 'Save Changes' : 'Create Exam'} 🏛️
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* --- POPUP 2: ADD QUESTION (SMART FORM) --- */}
+      {/* --- POPUP 2: ADD QUESTION --- */}
       {isAdmin && showAddQForm && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-xl p-6 relative max-h-[90vh] overflow-y-auto">
             <button onClick={resetQForm} className="absolute top-4 right-4 text-gray-400">✕</button>
-            <h2 className="text-lg font-bold mb-4 text-blue-700">{editingId ? 'Edit' : 'Add'} Question</h2>
+            <h2 className="text-lg font-bold mb-4 text-blue-700">{editingQId ? 'Edit' : 'Add'} Question</h2>
             
             <div className="space-y-3">
-              {/* 1. SELECT EXAM FIRST */}
               <div className="bg-blue-50 p-3 rounded border border-blue-100">
                 <label className="block text-xs font-bold text-blue-600 mb-1">Step 1: Select Exam</label>
                 <select className="w-full p-2 rounded bg-white border" 
@@ -193,7 +246,6 @@ export default function App() {
                 </select>
               </div>
 
-              {/* 2. SELECT SUBJECT (Based on Exam) */}
               {newQ.exam_id && (
                 <div className="bg-blue-50 p-3 rounded border border-blue-100">
                   <label className="block text-xs font-bold text-blue-600 mb-1">Step 2: Select Subject</label>
@@ -235,7 +287,16 @@ export default function App() {
           {exams.length === 0 ? <p className="col-span-2 text-center text-gray-400 mt-10">No Exams Added Yet.<br/>Use Admin Panel to add one!</p> :
             exams.map(exam => (
               <div key={exam.id} onClick={() => handleExamSelect(exam)}
-                className="bg-white p-6 rounded-xl shadow border border-gray-100 flex flex-col items-center gap-3 active:scale-95 transition cursor-pointer">
+                className="relative bg-white p-6 rounded-xl shadow border border-gray-100 flex flex-col items-center gap-3 active:scale-95 transition cursor-pointer group">
+                
+                {/* ADMIN ACTIONS: EDIT & DELETE */}
+                {isAdmin && (
+                  <div className="absolute top-2 right-2 flex gap-1 z-10">
+                    <button onClick={(e) => handleEditExamClick(e, exam)} className="bg-gray-100 p-1 rounded-full hover:bg-blue-100 text-xs">✏️</button>
+                    <button onClick={(e) => handleDeleteExam(e, exam.id)} className="bg-gray-100 p-1 rounded-full hover:bg-red-100 text-xs">🗑️</button>
+                  </div>
+                )}
+
                 <img src={exam.icon_url} className="w-12 h-12 object-contain" alt="icon" />
                 <span className="font-bold text-gray-800 text-center">{exam.name}</span>
               </div>
@@ -265,7 +326,7 @@ export default function App() {
             <div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
                {isAdmin && (
                   <div className="absolute top-4 right-4 flex gap-2">
-                    <button onClick={() => { setEditingId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
+                    <button onClick={() => { setEditingQId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
                     <button onClick={() => handleDeleteQ(q.id)} className="text-red-400">🗑️</button>
                   </div>
                 )}
