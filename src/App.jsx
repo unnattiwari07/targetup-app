@@ -35,7 +35,7 @@ export default function App() {
   // --- ADMIN: LOGIN/LOGOUT ---
   const handleAdminLogin = () => {
     const password = prompt("Enter Admin Password:")
-    if (password === "TargetUP2026") { 
+    if (password === "@Nextmove7388##===") { 
       setIsAdmin(true)
       localStorage.setItem('targetup_admin_logged_in', 'true')
     } else {
