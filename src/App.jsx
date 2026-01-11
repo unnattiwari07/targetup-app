@@ -4,28 +4,33 @@ import { supabase } from './supabaseClient'
 export default function App() {
   // --- STATE MANAGEMENT ---
   const [currentScreen, setCurrentScreen] = useState('HOME') 
+  
+  // Data State
   const [exams, setExams] = useState([])
+  const [questions, setQuestions] = useState([])
+  
+  // Selection State
   const [selectedExam, setSelectedExam] = useState(null)
   const [selectedSubject, setSelectedSubject] = useState(null)
-  const [questions, setQuestions] = useState([])
+  const [selectedChapter, setSelectedChapter] = useState(null)
   const [selectedAnswers, setSelectedAnswers] = useState({}) 
   
-  // --- ADMIN STATE ---
+  // Admin State
   const [isAdmin, setIsAdmin] = useState(false) 
   const [showAddQForm, setShowAddQForm] = useState(false) 
   const [showExamManager, setShowExamManager] = useState(false)
   
-  // Track what we are editing
+  // Edit State
   const [editingQId, setEditingQId] = useState(null)
   const [editingExamId, setEditingExamId] = useState(null)
   const fileInputRef = useRef(null)
 
-  // --- FORMS ---
+  // Forms
   const [newQ, setNewQ] = useState({
-    text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', difficulty: 'Easy'
+    text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', 
+    exam_id: '', subject: '', chapter: '', difficulty: 'Easy'
   })
   
-  // Added 'existingIcon' to keep track of old image during edit
   const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null, existingIcon: '' })
 
   useEffect(() => {
@@ -46,126 +51,104 @@ export default function App() {
     setQuestions(data || [])
   }
 
-  // --- ADMIN: EXAM MANAGEMENT (ADD / EDIT / DELETE) ---
+  // --- NAVIGATION FLOW ---
+  const handleExamSelect = (exam) => { 
+    setSelectedExam(exam); 
+    setCurrentScreen('SUBJECT_SELECT') 
+  }
   
-  // 1. PREPARE EDIT
-  const handleEditExamClick = (e, exam) => {
-    e.stopPropagation() // Stop the click from opening the exam
-    setEditingExamId(exam.id)
-    setNewExam({
-      name: exam.name,
-      subjects: exam.subjects.join(', '), // Convert Array to String
-      iconFile: null,
-      existingIcon: exam.icon_url
-    })
-    setShowExamManager(true)
+  const handleSubjectSelect = (subj) => { 
+    setSelectedSubject(subj); 
+    setCurrentScreen('CHAPTER_SELECT') 
   }
 
-  // 2. SAVE (INSERT OR UPDATE)
+  const handleChapterSelect = (chap) => {
+    setSelectedChapter(chap);
+    setCurrentScreen('QUESTIONS')
+  }
+
+  const goBack = () => {
+    if (currentScreen === 'QUESTIONS') setCurrentScreen('CHAPTER_SELECT')
+    else if (currentScreen === 'CHAPTER_SELECT') setCurrentScreen('SUBJECT_SELECT')
+    else if (currentScreen === 'SUBJECT_SELECT') setCurrentScreen('HOME')
+  }
+
+  // --- ADMIN: EXAM MANAGEMENT ---
   const handleSaveExam = async () => {
-    if (!newExam.name || !newExam.subjects) return alert("Enter Name and Subjects!")
-    
+    if (!newExam.name || !newExam.subjects) return alert("Enter details!")
     let iconUrl = newExam.existingIcon || 'https://placehold.co/100?text=Ex' 
-    
-    // Upload New Image (If selected)
     if (newExam.iconFile) {
       const fileName = `${Date.now()}-${newExam.iconFile.name}`
-      const { error: uploadError } = await supabase.storage.from('exam-icons').upload(fileName, newExam.iconFile)
-      if (uploadError) return alert("Image upload failed: " + uploadError.message)
-      
-      const { data: publicUrl } = supabase.storage.from('exam-icons').getPublicUrl(fileName)
-      iconUrl = publicUrl.publicUrl
+      const { error } = await supabase.storage.from('exam-icons').upload(fileName, newExam.iconFile)
+      if (!error) {
+        const { data } = supabase.storage.from('exam-icons').getPublicUrl(fileName)
+        iconUrl = data.publicUrl
+      }
     }
+    const subjects = newExam.subjects.split(',').map(s => s.trim())
+    const payload = { name: newExam.name, subjects, icon_url: iconUrl }
 
-    const subjectArray = newExam.subjects.split(',').map(s => s.trim())
+    if (editingExamId) await supabase.from('exams').update(payload).eq('id', editingExamId)
+    else await supabase.from('exams').insert([payload])
     
-    if (editingExamId) {
-      // UPDATE
-      const { error } = await supabase.from('exams').update({
-        name: newExam.name,
-        subjects: subjectArray,
-        icon_url: iconUrl
-      }).eq('id', editingExamId)
-      
-      if (error) alert("Error: " + error.message)
-      else alert("Exam Updated! ✅")
-    } else {
-      // CREATE
-      const { error } = await supabase.from('exams').insert([{
-        name: newExam.name,
-        subjects: subjectArray,
-        icon_url: iconUrl
-      }])
-      
-      if (error) alert("Error: " + error.message)
-      else alert("Exam Created! 🎉")
-    }
-
-    setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' })
-    setEditingExamId(null)
-    setShowExamManager(false)
-    fetchExams()
+    setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' }); setEditingExamId(null); setShowExamManager(false); fetchExams()
   }
 
-  // 3. DELETE EXAM
   const handleDeleteExam = async (e, id) => {
     e.stopPropagation()
-    if (!window.confirm("⚠️ Delete this Exam? This will delete ALL questions inside it too.")) return
-    
-    // First delete questions linked to this exam (Optional safety, or Supabase might block it)
+    if (!window.confirm("Delete Exam? Questions will be lost.")) return
     await supabase.from('questions').delete().eq('exam_id', id)
-    
-    // Then delete exam
-    const { error } = await supabase.from('exams').delete().eq('id', id)
-    if (error) alert("Error: " + error.message)
-    else fetchExams()
+    await supabase.from('exams').delete().eq('id', id)
+    fetchExams()
   }
 
   // --- ADMIN: QUESTION MANAGEMENT ---
   const handleSaveQuestion = async () => {
-    if (!newQ.text || !newQ.opA || !newQ.exam_id) return alert("Fill all fields & Select Exam!")
+    if (!newQ.text || !newQ.exam_id || !newQ.chapter) return alert("Fill all fields (including Chapter)!")
 
-    const questionData = {
+    const payload = {
       question_text: newQ.text,
       option_a: newQ.opA, option_b: newQ.opB, option_c: newQ.opC, option_d: newQ.opD,
       correct_option: newQ.correct,
       exam_id: newQ.exam_id,
       subject: newQ.subject,
+      chapter: newQ.chapter, 
       difficulty: newQ.difficulty
     }
 
     if (editingQId) {
-      await supabase.from('questions').update(questionData).eq('id', editingQId)
+      await supabase.from('questions').update(payload).eq('id', editingQId)
       alert("Updated! ✅")
     } else {
-      await supabase.from('questions').insert([questionData])
+      await supabase.from('questions').insert([payload])
       alert("Added! 🚀")
     }
     fetchQuestions(); resetQForm()
   }
 
   const handleDeleteQ = async (id) => {
-    if (!window.confirm("Delete this?")) return
+    if (!window.confirm("Delete?")) return
     await supabase.from('questions').delete().eq('id', id)
     fetchQuestions()
   }
 
   // --- HELPERS ---
-  const handleExamSelect = (exam) => { setSelectedExam(exam); setCurrentScreen('SUBJECT_SELECT') }
-  const handleSubjectSelect = (subj) => { setSelectedSubject(subj); setCurrentScreen('QUESTIONS') }
-  const goBack = () => {
-    if (currentScreen === 'QUESTIONS') setCurrentScreen('SUBJECT_SELECT')
-    else if (currentScreen === 'SUBJECT_SELECT') setCurrentScreen('HOME')
-  }
   const resetQForm = () => {
-    setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', difficulty: 'Easy' })
+    setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy' })
     setEditingQId(null); setShowAddQForm(false)
   }
-  const resetExamForm = () => {
-    setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' })
-    setEditingExamId(null)
-    setShowExamManager(false)
+
+  // Get Unique Chapters
+  const getChapters = () => {
+    const relevantQs = questions.filter(q => q.exam_id === selectedExam?.id && q.subject === selectedSubject)
+    const chapters = [...new Set(relevantQs.map(q => q.chapter))]
+    return chapters.map(chap => ({
+      name: chap,
+      count: relevantQs.filter(q => q.chapter === chap).length
+    }))
   }
+
+  const getAllChapters = () => [...new Set(questions.map(q => q.chapter))]
 
   // --- RENDER ---
   return (
@@ -175,137 +158,54 @@ export default function App() {
       <div className="bg-white p-4 shadow-sm sticky top-0 z-50 flex justify-between items-center">
         <div className="flex items-center gap-3">
            {currentScreen !== 'HOME' && <button onClick={goBack} className="text-xl p-1">⬅️</button>}
-           <h1 className="text-xl font-bold text-blue-900">
-             {currentScreen === 'HOME' ? 'TargetUP 🎯' : currentScreen === 'SUBJECT_SELECT' ? selectedExam?.name : selectedSubject}
+           <h1 className="text-xl font-bold text-blue-900 truncate max-w-[200px]">
+             {currentScreen === 'HOME' ? 'TargetUP 🎯' : 
+              currentScreen === 'SUBJECT_SELECT' ? selectedExam?.name : 
+              currentScreen === 'CHAPTER_SELECT' ? selectedSubject : 
+              selectedChapter}
            </h1>
         </div>
         {isAdmin ? (
           <div className="flex gap-2">
-            <button onClick={() => { resetExamForm(); setShowExamManager(true) }} className="bg-purple-100 text-purple-700 px-3 py-1 rounded text-xs font-bold border border-purple-200">Exams</button>
+            <button onClick={() => { setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' }); setShowExamManager(true) }} className="bg-purple-100 text-purple-700 px-3 py-1 rounded text-xs font-bold border border-purple-200">Exams</button>
             <button onClick={() => setShowAddQForm(true)} className="bg-blue-600 text-white px-3 py-1 rounded text-sm font-bold shadow">+ Q</button>
             <button onClick={() => {setIsAdmin(false); localStorage.removeItem('targetup_admin_logged_in')}} className="text-red-500 text-xs border border-red-200 px-2 py-1 rounded">Exit</button>
           </div>
         ) : (
-          <button onClick={() => { if(prompt("Password:") === "@Nextmove7388##===") { setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') }}} className="text-gray-400 text-xl">🔒</button>
+          <button onClick={() => { 
+            // --- NEW PASSWORD CHECK ---
+            if(prompt("Password:") === "@Nextmove7388##===") { 
+              setIsAdmin(true); 
+              localStorage.setItem('targetup_admin_logged_in','true') 
+            } else {
+              alert("Wrong Password!")
+            }
+          }} className="text-gray-400 text-xl">🔒</button>
         )}
       </div>
 
-      {/* --- POPUP 1: EXAM MANAGER (ADD / EDIT) --- */}
-      {isAdmin && showExamManager && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-xl p-6 relative">
-            <button onClick={resetExamForm} className="absolute top-4 right-4 text-gray-400">✕</button>
-            <h2 className="text-lg font-bold mb-4 text-purple-700">
-              {editingExamId ? 'Edit Exam' : 'Add New Exam'}
-            </h2>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs text-gray-500 font-bold">Exam Name</label>
-                <input className="w-full bg-gray-100 p-2 rounded border" placeholder="e.g. JEE Main 2026" 
-                  value={newExam.name} onChange={e => setNewExam({...newExam, name: e.target.value})} />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 font-bold">Subjects (comma separated)</label>
-                <input className="w-full bg-gray-100 p-2 rounded border" placeholder="e.g. Maths, Physics, Chemistry" 
-                  value={newExam.subjects} onChange={e => setNewExam({...newExam, subjects: e.target.value})} />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 font-bold">
-                  {editingExamId ? 'Change Icon (Optional)' : 'Upload Icon'}
-                </label>
-                <input type="file" ref={fileInputRef} className="w-full text-sm" 
-                  onChange={e => setNewExam({...newExam, iconFile: e.target.files[0]})} />
-                {newExam.existingIcon && !newExam.iconFile && <p className="text-xs text-green-600 mt-1">✓ Using current icon</p>}
-              </div>
-              <button onClick={handleSaveExam} className="w-full bg-purple-600 text-white py-3 rounded font-bold hover:bg-purple-700">
-                {editingExamId ? 'Save Changes' : 'Create Exam'} 🏛️
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* --- SCREENS --- */}
 
-      {/* --- POPUP 2: ADD QUESTION --- */}
-      {isAdmin && showAddQForm && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-xl p-6 relative max-h-[90vh] overflow-y-auto">
-            <button onClick={resetQForm} className="absolute top-4 right-4 text-gray-400">✕</button>
-            <h2 className="text-lg font-bold mb-4 text-blue-700">{editingQId ? 'Edit' : 'Add'} Question</h2>
-            
-            <div className="space-y-3">
-              <div className="bg-blue-50 p-3 rounded border border-blue-100">
-                <label className="block text-xs font-bold text-blue-600 mb-1">Step 1: Select Exam</label>
-                <select className="w-full p-2 rounded bg-white border" 
-                  value={newQ.exam_id} onChange={e => {
-                    const exam = exams.find(ex => ex.id == e.target.value)
-                    setNewQ({...newQ, exam_id: e.target.value, subject: exam?.subjects[0] || ''})
-                  }}>
-                  <option value="">-- Choose Exam --</option>
-                  {exams.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}
-                </select>
-              </div>
-
-              {newQ.exam_id && (
-                <div className="bg-blue-50 p-3 rounded border border-blue-100">
-                  <label className="block text-xs font-bold text-blue-600 mb-1">Step 2: Select Subject</label>
-                  <select className="w-full p-2 rounded bg-white border" 
-                    value={newQ.subject} onChange={e => setNewQ({...newQ, subject: e.target.value})}>
-                    {exams.find(ex => ex.id == newQ.exam_id)?.subjects.map(sub => (
-                      <option key={sub} value={sub}>{sub}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <textarea className="w-full bg-gray-100 p-3 rounded border" rows="3" placeholder="Question Text..." value={newQ.text} onChange={e => setNewQ({...newQ, text: e.target.value})} />
-              <div className="grid grid-cols-2 gap-2">
-                <input className="bg-gray-100 p-2 rounded" placeholder="Op A" value={newQ.opA} onChange={e => setNewQ({...newQ, opA: e.target.value})} />
-                <input className="bg-gray-100 p-2 rounded" placeholder="Op B" value={newQ.opB} onChange={e => setNewQ({...newQ, opB: e.target.value})} />
-                <input className="bg-gray-100 p-2 rounded" placeholder="Op C" value={newQ.opC} onChange={e => setNewQ({...newQ, opC: e.target.value})} />
-                <input className="bg-gray-100 p-2 rounded" placeholder="Op D" value={newQ.opD} onChange={e => setNewQ({...newQ, opD: e.target.value})} />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                 <select className="bg-gray-100 p-2 rounded" value={newQ.correct} onChange={e => setNewQ({...newQ, correct: e.target.value})}>
-                   <option value="A">Ans: A</option><option value="B">Ans: B</option><option value="C">Ans: C</option><option value="D">Ans: D</option>
-                 </select>
-                 <select className="bg-gray-100 p-2 rounded" value={newQ.difficulty} onChange={e => setNewQ({...newQ, difficulty: e.target.value})}>
-                   <option value="Easy">Easy</option><option value="Medium">Medium</option><option value="Hard">Hard</option>
-                 </select>
-              </div>
-              <button onClick={handleSaveQuestion} className="w-full bg-blue-600 text-white py-3 rounded font-bold mt-2 shadow-lg">Save & Publish</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- UI SCREENS --- */}
-      
-      {/* HOME */}
+      {/* 1. HOME (Exams) */}
       {currentScreen === 'HOME' && (
         <div className="p-4 grid grid-cols-2 gap-4">
-          {exams.length === 0 ? <p className="col-span-2 text-center text-gray-400 mt-10">No Exams Added Yet.<br/>Use Admin Panel to add one!</p> :
-            exams.map(exam => (
-              <div key={exam.id} onClick={() => handleExamSelect(exam)}
-                className="relative bg-white p-6 rounded-xl shadow border border-gray-100 flex flex-col items-center gap-3 active:scale-95 transition cursor-pointer group">
-                
-                {/* ADMIN ACTIONS: EDIT & DELETE */}
-                {isAdmin && (
-                  <div className="absolute top-2 right-2 flex gap-1 z-10">
-                    <button onClick={(e) => handleEditExamClick(e, exam)} className="bg-gray-100 p-1 rounded-full hover:bg-blue-100 text-xs">✏️</button>
-                    <button onClick={(e) => handleDeleteExam(e, exam.id)} className="bg-gray-100 p-1 rounded-full hover:bg-red-100 text-xs">🗑️</button>
-                  </div>
-                )}
-
-                <img src={exam.icon_url} className="w-12 h-12 object-contain" alt="icon" />
-                <span className="font-bold text-gray-800 text-center">{exam.name}</span>
-              </div>
-            ))
-          }
+          {exams.map(exam => (
+            <div key={exam.id} onClick={() => handleExamSelect(exam)}
+              className="relative bg-white p-6 rounded-xl shadow border border-gray-100 flex flex-col items-center gap-3 active:scale-95 transition cursor-pointer">
+              {isAdmin && (
+                <div className="absolute top-2 right-2 flex gap-1 z-10">
+                   <button onClick={(e) => { e.stopPropagation(); setEditingExamId(exam.id); setNewExam({ name: exam.name, subjects: exam.subjects.join(','), existingIcon: exam.icon_url }); setShowExamManager(true) }} className="bg-gray-100 p-1 rounded-full text-xs">✏️</button>
+                   <button onClick={(e) => handleDeleteExam(e, exam.id)} className="bg-gray-100 p-1 rounded-full text-xs text-red-500">🗑️</button>
+                </div>
+              )}
+              <img src={exam.icon_url} className="w-12 h-12 object-contain" alt="icon" />
+              <span className="font-bold text-gray-800 text-center">{exam.name}</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* SUBJECTS */}
+      {/* 2. SUBJECT SELECT */}
       {currentScreen === 'SUBJECT_SELECT' && (
         <div className="p-4 space-y-3">
           <div className="mb-4"><h1 className="text-2xl font-bold text-gray-800">{selectedExam.name}</h1></div>
@@ -319,10 +219,40 @@ export default function App() {
         </div>
       )}
 
-      {/* QUESTIONS */}
+      {/* 3. CHAPTER SELECT */}
+      {currentScreen === 'CHAPTER_SELECT' && (
+        <div className="p-4 space-y-3">
+          <div className="mb-4">
+            <h2 className="text-sm text-gray-500">{selectedExam.name} &gt; {selectedSubject}</h2>
+            <h1 className="text-2xl font-bold text-gray-800">Select Chapter</h1>
+          </div>
+          
+          {getChapters().length === 0 ? (
+            <div className="text-center py-10 text-gray-400">
+              <p>No chapters yet.</p>
+              {isAdmin && <p className="text-sm text-blue-500">Add a question to create a chapter!</p>}
+            </div>
+          ) : (
+            getChapters().map(chap => (
+              <div key={chap.name} onClick={() => handleChapterSelect(chap.name)}
+                className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center active:bg-blue-50 cursor-pointer">
+                <div>
+                  <h3 className="font-bold text-gray-800">{chap.name}</h3>
+                  <p className="text-xs text-gray-500">{chap.count} Questions</p>
+                </div>
+                <span className="text-blue-500 bg-blue-50 px-2 py-1 rounded text-xs font-bold">Start</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* 4. QUESTIONS */}
       {currentScreen === 'QUESTIONS' && (
         <div className="p-4 grid gap-4 md:grid-cols-2">
-          {questions.filter(q => q.exam_id == selectedExam.id && q.subject === selectedSubject).map((q, i) => (
+          {questions
+            .filter(q => q.exam_id == selectedExam.id && q.subject === selectedSubject && q.chapter === selectedChapter)
+            .map((q, i) => (
             <div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
                {isAdmin && (
                   <div className="absolute top-4 right-4 flex gap-2">
@@ -330,6 +260,7 @@ export default function App() {
                     <button onClick={() => handleDeleteQ(q.id)} className="text-red-400">🗑️</button>
                   </div>
                 )}
+               <div className="mb-2 text-xs text-gray-400 font-bold uppercase tracking-wide">{q.chapter}</div>
                <h2 className="text-lg font-medium text-gray-800 mb-4">{q.question_text}</h2>
                {['A','B','C','D'].map(key => (
                  <button key={key} onClick={() => { if(!selectedAnswers[q.id]) setSelectedAnswers({...selectedAnswers, [q.id]: key}) }} 
@@ -339,6 +270,78 @@ export default function App() {
                ))}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* --- ADMIN POPUPS --- */}
+
+      {/* EXAM MANAGER */}
+      {isAdmin && showExamManager && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-sm rounded-xl p-6 relative">
+            <button onClick={() => setShowExamManager(false)} className="absolute top-4 right-4 text-gray-400">✕</button>
+            <h2 className="text-lg font-bold mb-4 text-purple-700">{editingExamId ? 'Edit Exam' : 'Add Exam'}</h2>
+            <div className="space-y-3">
+              <input className="w-full bg-gray-100 p-2 rounded border" placeholder="Name (e.g. JEE)" value={newExam.name} onChange={e => setNewExam({...newExam, name: e.target.value})} />
+              <input className="w-full bg-gray-100 p-2 rounded border" placeholder="Subjects (e.g. Phy, Chem)" value={newExam.subjects} onChange={e => setNewExam({...newExam, subjects: e.target.value})} />
+              <input type="file" onChange={e => setNewExam({...newExam, iconFile: e.target.files[0]})} className="text-sm" />
+              <button onClick={handleSaveExam} className="w-full bg-purple-600 text-white py-3 rounded font-bold">Save Exam</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUESTION MANAGER */}
+      {isAdmin && showAddQForm && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-xl p-6 relative max-h-[90vh] overflow-y-auto">
+            <button onClick={resetQForm} className="absolute top-4 right-4 text-gray-400">✕</button>
+            <h2 className="text-lg font-bold mb-4 text-blue-700">{editingQId ? 'Edit' : 'Add'} Question</h2>
+            
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <select className="p-2 rounded bg-gray-100 border text-sm" value={newQ.exam_id} onChange={e => {
+                    const ex = exams.find(x => x.id == e.target.value); setNewQ({...newQ, exam_id: e.target.value, subject: ex?.subjects[0] || ''})
+                  }}>
+                  <option value="">Exam</option>
+                  {exams.map(ex => <option key={ex.id} value={ex.id}>{ex.name}</option>)}
+                </select>
+                <select className="p-2 rounded bg-gray-100 border text-sm" value={newQ.subject} onChange={e => setNewQ({...newQ, subject: e.target.value})}>
+                   {exams.find(ex => ex.id == newQ.exam_id)?.subjects.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-500">Chapter Name</label>
+                <input list="chapters-list" className="w-full bg-blue-50 p-2 rounded border border-blue-200 font-bold" 
+                  placeholder="e.g. Rotational Motion"
+                  value={newQ.chapter} onChange={e => setNewQ({...newQ, chapter: e.target.value})} 
+                />
+                <datalist id="chapters-list">
+                  {getAllChapters().map(c => <option key={c} value={c} />)}
+                </datalist>
+              </div>
+
+              <textarea className="w-full bg-gray-100 p-3 rounded border" rows="3" placeholder="Question..." value={newQ.text} onChange={e => setNewQ({...newQ, text: e.target.value})} />
+              
+              <div className="grid grid-cols-2 gap-2">
+                <input className="bg-gray-100 p-2 rounded" placeholder="Op A" value={newQ.opA} onChange={e => setNewQ({...newQ, opA: e.target.value})} />
+                <input className="bg-gray-100 p-2 rounded" placeholder="Op B" value={newQ.opB} onChange={e => setNewQ({...newQ, opB: e.target.value})} />
+                <input className="bg-gray-100 p-2 rounded" placeholder="Op C" value={newQ.opC} onChange={e => setNewQ({...newQ, opC: e.target.value})} />
+                <input className="bg-gray-100 p-2 rounded" placeholder="Op D" value={newQ.opD} onChange={e => setNewQ({...newQ, opD: e.target.value})} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                 <select className="bg-gray-100 p-2 rounded" value={newQ.correct} onChange={e => setNewQ({...newQ, correct: e.target.value})}>
+                   <option value="A">Ans: A</option><option value="B">Ans: B</option><option value="C">Ans: C</option><option value="D">Ans: D</option>
+                 </select>
+                 <select className="bg-gray-100 p-2 rounded" value={newQ.difficulty} onChange={e => setNewQ({...newQ, difficulty: e.target.value})}>
+                   <option value="Easy">Easy</option><option value="Medium">Medium</option><option value="Hard">Hard</option>
+                 </select>
+              </div>
+              <button onClick={handleSaveQuestion} className="w-full bg-blue-600 text-white py-3 rounded font-bold shadow-lg">Save Question</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
