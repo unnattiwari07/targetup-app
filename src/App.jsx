@@ -29,7 +29,7 @@ export default function App() {
   const [newQ, setNewQ] = useState({
     text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', 
     exam_id: '', subject: '', chapter: '', difficulty: 'Easy',
-    yearTag: '' // <--- NEW FIELD
+    yearTag: '' 
   })
   
   const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null, existingIcon: '' })
@@ -104,7 +104,7 @@ export default function App() {
       subject: newQ.subject,
       chapter: newQ.chapter, 
       difficulty: newQ.difficulty,
-      exam_year: newQ.yearTag // <--- SAVING TAG
+      exam_year: newQ.yearTag 
     }
 
     if (editingQId) {
@@ -127,6 +127,13 @@ export default function App() {
   const resetQForm = () => {
     setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy', yearTag: '' })
     setEditingQId(null); setShowAddQForm(false)
+  }
+
+  // THIS IS THE NEW FUNCTION FOR REFRESHING A SINGLE QUESTION
+  const handleResetQuestion = (id) => {
+    const newAnswers = { ...selectedAnswers }
+    delete newAnswers[id] // Remove the answer for this ID
+    setSelectedAnswers(newAnswers)
   }
 
   const getChapters = () => {
@@ -240,14 +247,31 @@ export default function App() {
             .filter(q => q.exam_id == selectedExam.id && q.subject === selectedSubject && q.chapter === selectedChapter)
             .map((q, i) => (
             <div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
+               
+               {/* --- ADMIN EDIT BUTTONS --- */}
                {isAdmin && (
                   <div className="absolute top-4 right-4 flex gap-2">
                     <button onClick={() => { setEditingQId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option, chapter: q.chapter, yearTag: q.exam_year || '' }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
                     <button onClick={() => handleDeleteQ(q.id)} className="text-red-400">🗑️</button>
                   </div>
                 )}
-               <div className="mb-2 text-xs text-gray-400 font-bold uppercase tracking-wide">{q.chapter}</div>
+               
+               {/* --- QUESTION HEADER (Chapter + Difficulty + REFRESH) --- */}
+               <div className="mb-3 flex justify-between items-start pr-16">
+                 <div>
+                    <div className="text-xs text-gray-400 font-bold uppercase tracking-wide mb-1">{q.chapter}</div>
+                    <span className={`text-xs px-2 py-0.5 rounded border ${q.difficulty === 'Easy' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-orange-50 text-orange-600 border-orange-200'}`}>{q.difficulty}</span>
+                 </div>
+                 {/* REFRESH ICON - Visible if answered */}
+                 {selectedAnswers[q.id] && (
+                   <button onClick={() => handleResetQuestion(q.id)} className="text-gray-400 hover:text-blue-600 transition" title="Re-attempt Question">
+                     🔄
+                   </button>
+                 )}
+               </div>
+
                <h2 className="text-lg font-medium text-gray-800 mb-4">{q.question_text}</h2>
+               
                {['A','B','C','D'].map(key => (
                  <button key={key} onClick={() => { if(!selectedAnswers[q.id]) setSelectedAnswers({...selectedAnswers, [q.id]: key}) }} 
                    className={`w-full text-left p-3 rounded-lg border mb-2 text-sm ${selectedAnswers[q.id] ? (q.correct_option===key ? 'bg-green-100 border-green-400' : selectedAnswers[q.id]===key ? 'bg-red-100 border-red-400' : 'opacity-50') : 'hover:bg-gray-50'}`}>
@@ -255,7 +279,7 @@ export default function App() {
                  </button>
                ))}
                
-               {/* --- THE MARKS APP YEAR TAG --- */}
+               {/* --- YEAR TAG --- */}
                {q.exam_year && (
                  <div className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1">
                    📅 {q.exam_year}
