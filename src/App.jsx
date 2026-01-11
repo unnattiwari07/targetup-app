@@ -29,7 +29,7 @@ export default function App() {
   const [newQ, setNewQ] = useState({
     text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', 
     exam_id: '', subject: '', chapter: '', difficulty: 'Easy',
-    yearTag: '' 
+    yearTag: '', solution: '' // <--- NEW FIELD
   })
   
   const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null, existingIcon: '' })
@@ -104,7 +104,8 @@ export default function App() {
       subject: newQ.subject,
       chapter: newQ.chapter, 
       difficulty: newQ.difficulty,
-      exam_year: newQ.yearTag 
+      exam_year: newQ.yearTag,
+      solution_text: newQ.solution // <--- SAVING SOLUTION
     }
 
     if (editingQId) {
@@ -123,17 +124,16 @@ export default function App() {
     fetchQuestions()
   }
 
-  // --- HELPERS ---
-  const resetQForm = () => {
-    setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy', yearTag: '' })
-    setEditingQId(null); setShowAddQForm(false)
-  }
-
-  // THIS IS THE NEW FUNCTION FOR REFRESHING A SINGLE QUESTION
   const handleResetQuestion = (id) => {
     const newAnswers = { ...selectedAnswers }
-    delete newAnswers[id] // Remove the answer for this ID
+    delete newAnswers[id] 
     setSelectedAnswers(newAnswers)
+  }
+
+  // --- HELPERS ---
+  const resetQForm = () => {
+    setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy', yearTag: '', solution: '' })
+    setEditingQId(null); setShowAddQForm(false)
   }
 
   const getChapters = () => {
@@ -248,25 +248,23 @@ export default function App() {
             .map((q, i) => (
             <div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
                
-               {/* --- ADMIN EDIT BUTTONS --- */}
+               {/* ADMIN EDIT */}
                {isAdmin && (
                   <div className="absolute top-4 right-4 flex gap-2">
-                    <button onClick={() => { setEditingQId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option, chapter: q.chapter, yearTag: q.exam_year || '' }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
+                    <button onClick={() => { setEditingQId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option, chapter: q.chapter, yearTag: q.exam_year || '', solution: q.solution_text || '' }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
                     <button onClick={() => handleDeleteQ(q.id)} className="text-red-400">🗑️</button>
                   </div>
                 )}
                
-               {/* --- QUESTION HEADER (Chapter + Difficulty + REFRESH) --- */}
+               {/* HEADER */}
                <div className="mb-3 flex justify-between items-start pr-16">
                  <div>
                     <div className="text-xs text-gray-400 font-bold uppercase tracking-wide mb-1">{q.chapter}</div>
                     <span className={`text-xs px-2 py-0.5 rounded border ${q.difficulty === 'Easy' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-orange-50 text-orange-600 border-orange-200'}`}>{q.difficulty}</span>
                  </div>
-                 {/* REFRESH ICON - Visible if answered */}
+                 {/* REFRESH */}
                  {selectedAnswers[q.id] && (
-                   <button onClick={() => handleResetQuestion(q.id)} className="text-gray-400 hover:text-blue-600 transition" title="Re-attempt Question">
-                     🔄
-                   </button>
+                   <button onClick={() => handleResetQuestion(q.id)} className="text-gray-400 hover:text-blue-600 transition" title="Re-attempt">🔄</button>
                  )}
                </div>
 
@@ -280,10 +278,19 @@ export default function App() {
                ))}
                
                {/* --- YEAR TAG --- */}
-               {q.exam_year && (
-                 <div className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1">
-                   📅 {q.exam_year}
-                 </div>
+               {q.exam_year && <div className="mt-2 text-xs text-gray-400 font-medium flex items-center gap-1">📅 {q.exam_year}</div>}
+
+               {/* --- SOLUTION (Shows ONLY after answering) --- */}
+               {selectedAnswers[q.id] && q.solution_text && (
+                 <details className="mt-3 group">
+                   <summary className="cursor-pointer text-sm font-bold text-blue-600 bg-blue-50 p-2 rounded hover:bg-blue-100 list-none flex justify-between items-center">
+                     <span>💡 View Solution</span>
+                     <span className="group-open:rotate-180 transition">▼</span>
+                   </summary>
+                   <div className="p-3 bg-gray-50 text-gray-700 text-sm border border-gray-200 rounded-b mt-1 whitespace-pre-wrap">
+                     {q.solution_text}
+                   </div>
+                 </details>
                )}
             </div>
           ))}
@@ -328,7 +335,6 @@ export default function App() {
                 </select>
               </div>
 
-              {/* CHAPTER + YEAR TAG */}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                     <label className="text-xs font-bold text-gray-500">Chapter</label>
@@ -349,8 +355,12 @@ export default function App() {
                 </div>
               </div>
 
-              <textarea className="w-full bg-gray-100 p-3 rounded border" rows="3" placeholder="Question..." value={newQ.text} onChange={e => setNewQ({...newQ, text: e.target.value})} />
+              <textarea className="w-full bg-gray-100 p-3 rounded border" rows="2" placeholder="Question..." value={newQ.text} onChange={e => setNewQ({...newQ, text: e.target.value})} />
               
+              {/* SOLUTION BOX */}
+              <textarea className="w-full bg-green-50 p-3 rounded border border-green-200 text-sm" rows="3" 
+                placeholder="💡 Explanation / Solution (Why is A correct?)..." value={newQ.solution} onChange={e => setNewQ({...newQ, solution: e.target.value})} />
+
               <div className="grid grid-cols-2 gap-2">
                 <input className="bg-gray-100 p-2 rounded" placeholder="Op A" value={newQ.opA} onChange={e => setNewQ({...newQ, opA: e.target.value})} />
                 <input className="bg-gray-100 p-2 rounded" placeholder="Op B" value={newQ.opB} onChange={e => setNewQ({...newQ, opB: e.target.value})} />
