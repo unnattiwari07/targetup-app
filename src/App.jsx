@@ -11,7 +11,7 @@ export default function App() {
   
   // User Data (Local)
   const [bookmarks, setBookmarks] = useState([]) 
-  const [solvedQs, setSolvedQs] = useState([]) // <--- NEW: Stores IDs of correctly solved Qs
+  const [solvedQs, setSolvedQs] = useState([]) 
   const [selectedAnswers, setSelectedAnswers] = useState({}) 
   
   // Selection State
@@ -36,17 +36,14 @@ export default function App() {
   const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null, existingIcon: '' })
 
   useEffect(() => {
-    // 1. Check Admin Login
     const storedLogin = localStorage.getItem('targetup_admin_logged_in')
     if (storedLogin === 'true') setIsAdmin(true)
     
-    // 2. Load User Progress
     const savedBookmarks = JSON.parse(localStorage.getItem('targetup_bookmarks') || '[]')
     const savedSolved = JSON.parse(localStorage.getItem('targetup_solved') || '[]')
     setBookmarks(savedBookmarks)
     setSolvedQs(savedSolved)
 
-    // 3. Load Data
     fetchExams()
     fetchQuestions()
   }, [])
@@ -61,7 +58,7 @@ export default function App() {
     setQuestions(data || [])
   }
 
-  // --- USER PROGRESS LOGIC ---
+  // --- USER ACTIONS ---
   const toggleBookmark = (id) => {
     const newVal = bookmarks.includes(id) ? bookmarks.filter(b => b !== id) : [...bookmarks, id]
     setBookmarks(newVal)
@@ -73,6 +70,21 @@ export default function App() {
       const newVal = [...solvedQs, id]
       setSolvedQs(newVal)
       localStorage.setItem('targetup_solved', JSON.stringify(newVal))
+    }
+  }
+
+  // --- THE NEW RESET FUNCTION (Undone + Update Progress) ---
+  const handleResetQuestion = (id) => {
+    // 1. Reset Visual State
+    const newAnswers = { ...selectedAnswers }
+    delete newAnswers[id] 
+    setSelectedAnswers(newAnswers)
+
+    // 2. Remove from "Solved" List (Updates Progress Bar)
+    if (solvedQs.includes(id)) {
+      const newSolved = solvedQs.filter(qId => qId !== id)
+      setSolvedQs(newSolved)
+      localStorage.setItem('targetup_solved', JSON.stringify(newSolved))
     }
   }
 
@@ -146,12 +158,6 @@ export default function App() {
     fetchQuestions()
   }
 
-  const handleResetQuestion = (id) => {
-    const newAnswers = { ...selectedAnswers }
-    delete newAnswers[id] 
-    setSelectedAnswers(newAnswers)
-  }
-
   const resetQForm = () => {
     setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy', yearTag: '', solution: '', imageFile: null, existingImage: '' })
     setEditingQId(null); setShowAddQForm(false)
@@ -165,19 +171,14 @@ export default function App() {
     return Math.round((solved / total) * 100)
   }
 
-  const getChapterProgress = (examId, subject, chapter) => {
-    const relevantQs = questions.filter(q => q.exam_id === examId && q.subject === subject && q.chapter === chapter)
-    const total = relevantQs.length
-    const solved = relevantQs.filter(q => solvedQs.includes(q.id)).length
-    return { total, solved, percent: total === 0 ? 0 : Math.round((solved / total) * 100) }
-  }
-
   const getChapters = () => {
     const relevantQs = questions.filter(q => q.exam_id === selectedExam?.id && q.subject === selectedSubject)
     const chapters = [...new Set(relevantQs.map(q => q.chapter))]
     return chapters.map(chap => {
-      const stats = getChapterProgress(selectedExam.id, selectedSubject, chap)
-      return { name: chap, ...stats }
+      const chapQs = relevantQs.filter(q => q.chapter === chap)
+      const solvedCount = chapQs.filter(q => solvedQs.includes(q.id)).length
+      const percent = chapQs.length === 0 ? 0 : Math.round((solvedCount / chapQs.length) * 100)
+      return { name: chap, total: chapQs.length, solved: solvedCount, percent }
     })
   }
 
@@ -272,7 +273,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 3. CHAPTER SELECT (WITH PROGRESS!) */}
+      {/* 3. CHAPTER SELECT */}
       {currentScreen === 'CHAPTER_SELECT' && (
         <div className="p-4 space-y-3">
           <div className="mb-4">
@@ -290,7 +291,6 @@ export default function App() {
                   <h3 className="font-bold text-gray-800">{chap.name}</h3>
                   <span className="text-blue-500 text-xs font-bold bg-blue-50 px-2 py-1 rounded">{chap.solved}/{chap.total}</span>
                 </div>
-                {/* Chapter Progress Bar */}
                 <div className="w-full h-1.5 bg-gray-100 rounded-full">
                     <div className="h-full bg-green-500 rounded-full transition-all duration-500" style={{width: `${chap.percent}%`}}></div>
                 </div>
@@ -322,8 +322,10 @@ export default function App() {
                     <button onClick={() => toggleBookmark(q.id)} className="transition active:scale-125">
                        {bookmarks.includes(q.id) ? '❤️' : '🤍'}
                     </button>
+                    
+                    {/* RESET BUTTON (Visually & Progress) */}
                     {selectedAnswers[q.id] && (
-                      <button onClick={() => handleResetQuestion(q.id)} className="text-gray-400 hover:text-blue-600 transition">🔄</button>
+                      <button onClick={() => handleResetQuestion(q.id)} className="text-gray-400 hover:text-blue-600 transition" title="Re-attempt & Reset Progress">🔄</button>
                     )}
                  </div>
                </div>
@@ -334,7 +336,7 @@ export default function App() {
                    onClick={() => { 
                      if(!selectedAnswers[q.id]) {
                         setSelectedAnswers({...selectedAnswers, [q.id]: key})
-                        if(q.correct_option === key) markQuestionSolved(q.id) // <--- SAVE PROGRESS
+                        if(q.correct_option === key) markQuestionSolved(q.id)
                      }
                    }} 
                    className={`w-full text-left p-3 rounded-lg border mb-2 text-sm ${selectedAnswers[q.id] ? (q.correct_option===key ? 'bg-green-100 border-green-400' : selectedAnswers[q.id]===key ? 'bg-red-100 border-red-400' : 'opacity-50') : 'hover:bg-gray-50'}`}>
