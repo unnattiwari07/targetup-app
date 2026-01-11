@@ -28,7 +28,8 @@ export default function App() {
   // Forms
   const [newQ, setNewQ] = useState({
     text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', 
-    exam_id: '', subject: '', chapter: '', difficulty: 'Easy'
+    exam_id: '', subject: '', chapter: '', difficulty: 'Easy',
+    yearTag: '' // <--- NEW FIELD
   })
   
   const [newExam, setNewExam] = useState({ name: '', subjects: '', iconFile: null, existingIcon: '' })
@@ -52,20 +53,9 @@ export default function App() {
   }
 
   // --- NAVIGATION FLOW ---
-  const handleExamSelect = (exam) => { 
-    setSelectedExam(exam); 
-    setCurrentScreen('SUBJECT_SELECT') 
-  }
-  
-  const handleSubjectSelect = (subj) => { 
-    setSelectedSubject(subj); 
-    setCurrentScreen('CHAPTER_SELECT') 
-  }
-
-  const handleChapterSelect = (chap) => {
-    setSelectedChapter(chap);
-    setCurrentScreen('QUESTIONS')
-  }
+  const handleExamSelect = (exam) => { setSelectedExam(exam); setCurrentScreen('SUBJECT_SELECT') }
+  const handleSubjectSelect = (subj) => { setSelectedSubject(subj); setCurrentScreen('CHAPTER_SELECT') }
+  const handleChapterSelect = (chap) => { setSelectedChapter(chap); setCurrentScreen('QUESTIONS') }
 
   const goBack = () => {
     if (currentScreen === 'QUESTIONS') setCurrentScreen('CHAPTER_SELECT')
@@ -104,7 +94,7 @@ export default function App() {
 
   // --- ADMIN: QUESTION MANAGEMENT ---
   const handleSaveQuestion = async () => {
-    if (!newQ.text || !newQ.exam_id || !newQ.chapter) return alert("Fill all fields (including Chapter)!")
+    if (!newQ.text || !newQ.exam_id || !newQ.chapter) return alert("Fill all fields!")
 
     const payload = {
       question_text: newQ.text,
@@ -113,7 +103,8 @@ export default function App() {
       exam_id: newQ.exam_id,
       subject: newQ.subject,
       chapter: newQ.chapter, 
-      difficulty: newQ.difficulty
+      difficulty: newQ.difficulty,
+      exam_year: newQ.yearTag // <--- SAVING TAG
     }
 
     if (editingQId) {
@@ -134,11 +125,10 @@ export default function App() {
 
   // --- HELPERS ---
   const resetQForm = () => {
-    setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy' })
+    setNewQ({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy', yearTag: '' })
     setEditingQId(null); setShowAddQForm(false)
   }
 
-  // Get Unique Chapters
   const getChapters = () => {
     const relevantQs = questions.filter(q => q.exam_id === selectedExam?.id && q.subject === selectedSubject)
     const chapters = [...new Set(relevantQs.map(q => q.chapter))]
@@ -173,20 +163,16 @@ export default function App() {
           </div>
         ) : (
           <button onClick={() => { 
-            // --- NEW PASSWORD CHECK ---
             if(prompt("Password:") === "@Nextmove7388##===") { 
-              setIsAdmin(true); 
-              localStorage.setItem('targetup_admin_logged_in','true') 
-            } else {
-              alert("Wrong Password!")
-            }
+              setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') 
+            } else { alert("Wrong Password!") }
           }} className="text-gray-400 text-xl">🔒</button>
         )}
       </div>
 
       {/* --- SCREENS --- */}
 
-      {/* 1. HOME (Exams) */}
+      {/* 1. HOME */}
       {currentScreen === 'HOME' && (
         <div className="p-4 grid grid-cols-2 gap-4">
           {exams.map(exam => (
@@ -256,7 +242,7 @@ export default function App() {
             <div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 relative">
                {isAdmin && (
                   <div className="absolute top-4 right-4 flex gap-2">
-                    <button onClick={() => { setEditingQId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
+                    <button onClick={() => { setEditingQId(q.id); setNewQ({ ...q, exam_id: q.exam_id, text: q.question_text, opA: q.option_a, opB: q.option_b, opC: q.option_c, opD: q.option_d, correct: q.correct_option, chapter: q.chapter, yearTag: q.exam_year || '' }); setShowAddQForm(true) }} className="text-blue-400">✏️</button>
                     <button onClick={() => handleDeleteQ(q.id)} className="text-red-400">🗑️</button>
                   </div>
                 )}
@@ -268,6 +254,13 @@ export default function App() {
                    <span className="font-bold mr-2">{key}.</span> {q[`option_${key.toLowerCase()}`]}
                  </button>
                ))}
+               
+               {/* --- THE MARKS APP YEAR TAG --- */}
+               {q.exam_year && (
+                 <div className="mt-3 text-xs text-gray-400 font-medium flex items-center gap-1">
+                   📅 {q.exam_year}
+                 </div>
+               )}
             </div>
           ))}
         </div>
@@ -311,15 +304,25 @@ export default function App() {
                 </select>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-500">Chapter Name</label>
-                <input list="chapters-list" className="w-full bg-blue-50 p-2 rounded border border-blue-200 font-bold" 
-                  placeholder="e.g. Rotational Motion"
-                  value={newQ.chapter} onChange={e => setNewQ({...newQ, chapter: e.target.value})} 
-                />
-                <datalist id="chapters-list">
-                  {getAllChapters().map(c => <option key={c} value={c} />)}
-                </datalist>
+              {/* CHAPTER + YEAR TAG */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                    <label className="text-xs font-bold text-gray-500">Chapter</label>
+                    <input list="chapters-list" className="w-full bg-blue-50 p-2 rounded border border-blue-200 font-bold text-sm" 
+                    placeholder="e.g. Motion"
+                    value={newQ.chapter} onChange={e => setNewQ({...newQ, chapter: e.target.value})} 
+                    />
+                    <datalist id="chapters-list">
+                    {getAllChapters().map(c => <option key={c} value={c} />)}
+                    </datalist>
+                </div>
+                <div>
+                    <label className="text-xs font-bold text-gray-500">Year / Source</label>
+                    <input className="w-full bg-gray-100 p-2 rounded border text-sm" 
+                    placeholder="e.g. JEE 2024"
+                    value={newQ.yearTag} onChange={e => setNewQ({...newQ, yearTag: e.target.value})} 
+                    />
+                </div>
               </div>
 
               <textarea className="w-full bg-gray-100 p-3 rounded border" rows="3" placeholder="Question..." value={newQ.text} onChange={e => setNewQ({...newQ, text: e.target.value})} />
