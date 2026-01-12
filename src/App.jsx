@@ -160,7 +160,21 @@ export default function App() {
   
   const handleGoogleLogin = async () => { const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } }); if (error) alert(error.message) }
   
-  const handleLogout = async () => { await supabase.auth.signOut(); setAuthForm({ email: '', password: '', isLogin: true }); setShowProfileMenu(false); setCurrentScreen('HOME'); loadLocalUserData() }
+  const handleLogout = async () => {
+    // 1. Force UI to clear immediately (Instant Feedback)
+    setUser(null)
+    setShowProfileMenu(false)
+    setCurrentScreen('HOME')
+    
+    // 2. Clear any sensitive data from the screen
+    setTestHistory([]) 
+    
+    // 3. Tell Supabase to kill the session in the background
+    await supabase.auth.signOut()
+    
+    // 4. Revert to Guest Mode data
+    loadLocalUserData()
+  }
   
   const toggleBookmark = async (id) => { const isBookmarked = bookmarks.includes(id); const newVal = isBookmarked ? bookmarks.filter(b => b !== id) : [...bookmarks, id]; setBookmarks(newVal); if (user) { if (isBookmarked) await supabase.from('user_bookmarks').delete().eq('user_id', user.id).eq('question_id', id); else await supabase.from('user_bookmarks').insert([{ user_id: user.id, question_id: id }]) } else localStorage.setItem('targetup_bookmarks', JSON.stringify(newVal)) }
   
