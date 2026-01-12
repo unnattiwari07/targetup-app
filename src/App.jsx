@@ -161,18 +161,24 @@ export default function App() {
   const handleGoogleLogin = async () => { const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } }); if (error) alert(error.message) }
   
   const handleLogout = async () => {
-    // 1. Force UI to clear immediately (Instant Feedback)
+    // 1. Immediate UI Cleanup
     setUser(null)
     setShowProfileMenu(false)
     setCurrentScreen('HOME')
-    
-    // 2. Clear any sensitive data from the screen
     setTestHistory([]) 
-    
-    // 3. Tell Supabase to kill the session in the background
+
+    // 2. Tell Supabase to sign out
     await supabase.auth.signOut()
+
+    // 3. NUCLEAR OPTION: Manually find and delete the Supabase token
+    // This ensures that even if you refresh immediately, the session is DEAD.
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('sb-')) {
+        localStorage.removeItem(key)
+      }
+    })
     
-    // 4. Revert to Guest Mode data
+    // 4. Load Guest Data
     loadLocalUserData()
   }
   
