@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient'
 
 export default function App() {
   // --- STATE MANAGEMENT ---
-  const [currentScreen, setCurrentScreen] = useState('HOME') // HOME, SUBJECT_SELECT, CHAPTER_SELECT, QUESTIONS, SAVED, PROFILE, SETTINGS, TEST_SETUP, TEST_ACTIVE, TEST_RESULT
+  const [currentScreen, setCurrentScreen] = useState('HOME') 
   
   // Data State
   const [exams, setExams] = useState([])
@@ -13,18 +13,19 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [bookmarks, setBookmarks] = useState([]) 
   const [solvedQs, setSolvedQs] = useState([]) 
+  const [testHistory, setTestHistory] = useState([]) // <--- NEW: Stores past results
   const [selectedAnswers, setSelectedAnswers] = useState({}) 
   
-  // Practice Mode Selection
+  // Selection State
   const [selectedExam, setSelectedExam] = useState(null)
   const [selectedSubject, setSelectedSubject] = useState(null)
   const [selectedChapter, setSelectedChapter] = useState(null)
   
-  // TEST MODE STATE (NEW ⏱️)
+  // TEST MODE STATE
   const [testConfig, setTestConfig] = useState({ examId: '', subject: 'All', chapter: 'All', qCount: 15 })
-  const [testQuestions, setTestQuestions] = useState([]) // The 15 Qs selected for test
-  const [testTimeLeft, setTestTimeLeft] = useState(0) // Seconds
-  const [testScore, setTestScore] = useState(null) // { total, correct, wrong, skipped }
+  const [testQuestions, setTestQuestions] = useState([]) 
+  const [testTimeLeft, setTestTimeLeft] = useState(0) 
+  const [testScore, setTestScore] = useState(null) 
 
   // UI State
   const [showProfileMenu, setShowProfileMenu] = useState(false) 
@@ -70,15 +71,12 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // --- TIMER LOGIC ---
   useEffect(() => {
     let timerId
     if (currentScreen === 'TEST_ACTIVE' && testTimeLeft > 0) {
-      timerId = setInterval(() => {
-        setTestTimeLeft(prev => prev - 1)
-      }, 1000)
+      timerId = setInterval(() => { setTestTimeLeft(prev => prev - 1) }, 1000)
     } else if (currentScreen === 'TEST_ACTIVE' && testTimeLeft === 0) {
-      submitTest() // Auto submit when time is up
+      submitTest() 
     }
     return () => clearInterval(timerId)
   }, [currentScreen, testTimeLeft])
@@ -87,13 +85,19 @@ export default function App() {
   const loadLocalUserData = () => {
     setBookmarks(JSON.parse(localStorage.getItem('targetup_bookmarks') || '[]'))
     setSolvedQs(JSON.parse(localStorage.getItem('targetup_solved') || '[]'))
+    // Tests are not saved locally in this version, only cloud
   }
 
   const fetchCloudUserData = async (userId) => {
     const { data: solvedData } = await supabase.from('user_solved').select('question_id').eq('user_id', userId)
     if (solvedData) setSolvedQs(solvedData.map(item => item.question_id))
+
     const { data: bookmarkData } = await supabase.from('user_bookmarks').select('question_id').eq('user_id', userId)
     if (bookmarkData) setBookmarks(bookmarkData.map(item => item.question_id))
+
+    // FETCH TEST HISTORY
+    const { data: testData } = await supabase.from('test_results').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+    if (testData) setTestHistory(testData)
   }
 
   async function fetchExams() {
@@ -105,53 +109,57 @@ export default function App() {
     setQuestions(data || [])
   }
 
-  // --- TEST ENGINE LOGIC (NEW 🧠) ---
+  // --- TEST ENGINE LOGIC ---
   const startTest = () => {
     if (!testConfig.examId) return alert("Please select an Exam")
-
-    // 1. Filter Questions based on Config
     let pool = questions.filter(q => q.exam_id == testConfig.examId)
     if (testConfig.subject !== 'All') pool = pool.filter(q => q.subject === testConfig.subject)
     if (testConfig.chapter !== 'All') pool = pool.filter(q => q.chapter === testConfig.chapter)
 
     if (pool.length === 0) return alert("No questions found for this selection!")
 
-    // 2. Shuffle & Select N questions
     const shuffled = pool.sort(() => 0.5 - Math.random())
     const selected = shuffled.slice(0, testConfig.qCount)
 
-    // 3. Set State
     setTestQuestions(selected)
-    setSelectedAnswers({}) // Clear previous answers
-    setTestTimeLeft(selected.length * 120) // 2 mins per question
+    setSelectedAnswers({}) 
+    setTestTimeLeft(selected.length * 120) 
     setCurrentScreen('TEST_ACTIVE')
   }
 
-  const submitTest = () => {
-    let correct = 0
-    let wrong = 0
-    let skipped = 0
-    let newSolved = []
-
+  const submitTest = async () => {
+    let correct = 0, wrong = 0, skipped = 0, newSolved = []
     testQuestions.forEach(q => {
       const userAns = selectedAnswers[q.id]
-      if (!userAns) {
-        skipped++
-      } else if (userAns === q.correct_option) {
-        correct++
-        newSolved.push(q.id)
-      } else {
-        wrong++
-      }
+      if (!userAns) skipped++
+      else if (userAns === q.correct_option) { correct++; newSolved.push(q.id) }
+      else wrong++
     })
 
-    // Save solved questions to progress
     newSolved.forEach(id => markQuestionSolved(id))
 
-    // Calculate Marks (+4 for correct, -1 for wrong)
     const marks = (correct * 4) - (wrong * 1)
+    const maxMarks = testQuestions.length * 4
     
-    setTestScore({ total: marks, correct, wrong, skipped, maxMarks: testQuestions.length * 4 })
+    // SAVE TO CLOUD (If Logged In)
+    if (user) {
+        const examName = exams.find(e => e.id == testConfig.examId)?.name || 'Custom Test'
+        const topic = testConfig.subject === 'All' ? 'Full Mock' : testConfig.subject
+        const title = `${examName} - ${topic}`
+
+        const payload = {
+            user_id: user.id,
+            exam_name: title,
+            score: marks,
+            max_marks: maxMarks,
+            correct,
+            wrong
+        }
+        const { error } = await supabase.from('test_results').insert([payload])
+        if (!error) fetchCloudUserData(user.id) // Refresh history
+    }
+
+    setTestScore({ total: marks, correct, wrong, skipped, maxMarks })
     setCurrentScreen('TEST_RESULT')
   }
 
@@ -215,7 +223,7 @@ export default function App() {
     if (currentScreen === 'TEST_SETUP') setCurrentScreen('HOME')
     else if (currentScreen === 'TEST_RESULT') setCurrentScreen('TEST_SETUP')
     else if (currentScreen === 'TEST_ACTIVE') { if(window.confirm("Quit Test? Progress will be lost.")) setCurrentScreen('TEST_SETUP') } 
-    else if (currentScreen === 'PROFILE' || currentScreen === 'SETTINGS') setCurrentScreen('HOME')
+    else if (currentScreen === 'PROFILE' || currentScreen === 'SETTINGS' || currentScreen === 'RESULTS_HISTORY') setCurrentScreen('HOME')
     else if (currentScreen === 'QUESTIONS' || currentScreen === 'SAVED') setCurrentScreen('CHAPTER_SELECT')
     else if (currentScreen === 'SAVED') setCurrentScreen('HOME') 
     else if (currentScreen === 'QUESTIONS') setCurrentScreen('CHAPTER_SELECT')
@@ -234,7 +242,6 @@ export default function App() {
     if (currentScreen === 'SAVED') return questions.filter(q => bookmarks.includes(q.id))
     return questions.filter(q => q.exam_id == selectedExam?.id && q.subject === selectedSubject && q.chapter === selectedChapter)
   }
-  // Admin functions omitted for brevity (same as previous)
   const handleSaveExam = async () => { if (!newExam.name || !newExam.subjects) return alert("Enter details!"); let iconUrl = newExam.existingIcon || 'https://placehold.co/100?text=Ex'; if (newExam.iconFile) { const fileName = `${Date.now()}-${newExam.iconFile.name}`; const { error } = await supabase.storage.from('exam-icons').upload(fileName, newExam.iconFile); if (!error) { const { data } = supabase.storage.from('exam-icons').getPublicUrl(fileName); iconUrl = data.publicUrl } } const subjects = newExam.subjects.split(',').map(s => s.trim()); const payload = { name: newExam.name, subjects, icon_url: iconUrl }; if (editingExamId) await supabase.from('exams').update(payload).eq('id', editingExamId); else await supabase.from('exams').insert([payload]); setNewExam({ name: '', subjects: '', iconFile: null, existingIcon: '' }); setEditingExamId(null); setShowExamManager(false); fetchExams() }
   const handleDeleteExam = async (e, id) => { e.stopPropagation(); if (!window.confirm("Delete Exam?")) return; await supabase.from('questions').delete().eq('exam_id', id); await supabase.from('exams').delete().eq('id', id); fetchExams() }
   const handleSaveQuestion = async () => { if (!newQ.text || !newQ.exam_id || !newQ.chapter) return alert("Fill fields!"); let imageUrl = newQ.existingImage || null; if (newQ.imageFile) { const fileName = `q-${Date.now()}-${newQ.imageFile.name}`; const { error } = await supabase.storage.from('question-images').upload(fileName, newQ.imageFile); if (!error) { const { data } = supabase.storage.from('question-images').getPublicUrl(fileName); imageUrl = data.publicUrl } } const payload = { question_text: newQ.text, option_a: newQ.opA, option_b: newQ.opB, option_c: newQ.opC, option_d: newQ.opD, correct_option: newQ.correct, exam_id: newQ.exam_id, subject: newQ.subject, chapter: newQ.chapter, difficulty: newQ.difficulty, exam_year: newQ.yearTag, solution_text: newQ.solution, image_url: imageUrl }; if (editingQId) await supabase.from('questions').update(payload).eq('id', editingQId); else await supabase.from('questions').insert([payload]); fetchQuestions(); resetQForm() }
@@ -250,12 +257,12 @@ export default function App() {
         <div className="flex items-center gap-3">
            {currentScreen !== 'HOME' && <button onClick={goBack} className="text-xl p-1">⬅️</button>}
            <h1 className={`text-xl font-bold truncate max-w-[200px] ${darkMode ? 'text-blue-400' : 'text-blue-900'}`}>
-             {currentScreen === 'HOME' ? 'TargetUP 🎯' : currentScreen === 'TEST_ACTIVE' ? 'Time Left: ' + formatTime(testTimeLeft) : currentScreen === 'TEST_SETUP' ? 'Test Setup' : currentScreen === 'TEST_RESULT' ? 'Report Card' : selectedChapter || selectedSubject || selectedExam?.name || 'TargetUP'}
+             {currentScreen === 'HOME' ? 'TargetUP 🎯' : currentScreen === 'TEST_ACTIVE' ? 'Time Left: ' + formatTime(testTimeLeft) : currentScreen === 'TEST_SETUP' ? 'Test Setup' : currentScreen === 'TEST_RESULT' ? 'Report Card' : currentScreen === 'RESULTS_HISTORY' ? 'History' : selectedChapter || selectedSubject || selectedExam?.name || 'TargetUP'}
            </h1>
         </div>
         <div className="flex gap-3 items-center relative">
           <button onClick={() => user ? setShowProfileMenu(!showProfileMenu) : setShowAuthModal(true)} className={`w-9 h-9 rounded-full border-2 flex items-center justify-center font-bold text-xs transition overflow-hidden ${user ? 'border-blue-500' : 'border-gray-300 bg-gray-200 text-gray-500'}`}>{user ? (user.user_metadata?.avatar_url ? <img src={user.user_metadata.avatar_url} className="w-full h-full object-cover" /> : user.email[0].toUpperCase()) : '👤'}</button>
-          {showProfileMenu && user && ( <div className={`absolute top-12 right-0 w-64 rounded-xl shadow-2xl border animation-fade-in z-50 overflow-hidden ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}><div className="p-4 border-b border-gray-100 flex items-center gap-3 bg-blue-50/50"><div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-lg overflow-hidden">{user.user_metadata?.avatar_url ? <img src={user.user_metadata.avatar_url} className="w-full h-full object-cover" /> : user.email[0].toUpperCase()}</div><div className="overflow-hidden"><p className="font-bold text-sm truncate text-gray-800">{user.user_metadata?.full_name || 'Student'}</p><p className="text-xs text-gray-500 truncate">{user.email}</p></div></div><div className="p-2"><button onClick={() => { setCurrentScreen('PROFILE'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>👤</span> My Profile</button><button onClick={() => { setCurrentScreen('SAVED'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>❤️</span> Saved Questions</button><button onClick={() => { setCurrentScreen('SETTINGS'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>⚙️</span> Settings</button></div><div className="p-2 border-t border-gray-100"><button onClick={handleLogout} className="w-full text-left px-4 py-2 rounded-lg hover:bg-red-50 text-sm font-bold text-red-500 flex gap-3 items-center"><span>🚪</span> Log Out</button></div></div> )}
+          {showProfileMenu && user && ( <div className={`absolute top-12 right-0 w-64 rounded-xl shadow-2xl border animation-fade-in z-50 overflow-hidden ${darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}><div className="p-4 border-b border-gray-100 flex items-center gap-3 bg-blue-50/50"><div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-lg overflow-hidden">{user.user_metadata?.avatar_url ? <img src={user.user_metadata.avatar_url} className="w-full h-full object-cover" /> : user.email[0].toUpperCase()}</div><div className="overflow-hidden"><p className="font-bold text-sm truncate text-gray-800">{user.user_metadata?.full_name || 'Student'}</p><p className="text-xs text-gray-500 truncate">{user.email}</p></div></div><div className="p-2"><button onClick={() => { setCurrentScreen('PROFILE'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>👤</span> My Profile</button><button onClick={() => { setCurrentScreen('RESULTS_HISTORY'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>📊</span> Test History</button><button onClick={() => { setCurrentScreen('SAVED'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>❤️</span> Saved Questions</button><button onClick={() => { setCurrentScreen('SETTINGS'); setShowProfileMenu(false) }} className="w-full text-left px-4 py-3 rounded-lg hover:bg-gray-50 text-sm font-medium flex gap-3 items-center text-gray-700"><span>⚙️</span> Settings</button></div><div className="p-2 border-t border-gray-100"><button onClick={handleLogout} className="w-full text-left px-4 py-2 rounded-lg hover:bg-red-50 text-sm font-bold text-red-500 flex gap-3 items-center"><span>🚪</span> Log Out</button></div></div> )}
           {isAdmin ? (<button onClick={() => {setIsAdmin(false); localStorage.removeItem('targetup_admin_logged_in')}} className="text-red-500 text-xs border border-red-200 px-2 py-1 rounded">Exit</button>) : (<button onClick={() => { if(prompt("Password:") === "@Nextmove7388##===") { setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') } }} className="text-gray-400 text-xl">🔒</button>)}
         </div>
       </div>
@@ -272,159 +279,78 @@ export default function App() {
       {currentScreen === 'HOME' && (
         <div className="p-4">
           {!user && <div onClick={() => setShowAuthModal(true)} className="bg-blue-50 border border-blue-200 p-3 rounded-xl mb-4 text-center cursor-pointer"><p className="text-blue-800 font-bold text-sm">☁️ Sync to Cloud</p><p className="text-blue-500 text-xs">Log in to save your progress.</p></div>}
-          
-          {/* MOCK TEST BUTTON (NEW ⏱️) */}
-          <div onClick={() => setCurrentScreen('TEST_SETUP')} className="bg-gradient-to-r from-purple-500 to-indigo-600 p-4 rounded-xl mb-6 flex items-center justify-between cursor-pointer active:scale-95 transition shadow-lg text-white">
-            <div className="flex items-center gap-3"><span className="text-2xl">⏱️</span><div><h3 className="font-bold">Exam Simulator</h3><p className="text-xs opacity-90">Take a Mock Test</p></div></div><span className="text-white">➔</span>
-          </div>
-
+          <div onClick={() => user ? setCurrentScreen('TEST_SETUP') : setShowAuthModal(true)} className="bg-gradient-to-r from-purple-500 to-indigo-600 p-4 rounded-xl mb-6 flex items-center justify-between cursor-pointer active:scale-95 transition shadow-lg text-white"><div className="flex items-center gap-3"><span className="text-2xl">⏱️</span><div><h3 className="font-bold">Exam Simulator</h3><p className="text-xs opacity-90">Take a Mock Test</p></div></div><span className="text-white">➔</span></div>
           <div onClick={() => setCurrentScreen('SAVED')} className="bg-pink-100 border border-pink-200 p-4 rounded-xl mb-6 flex items-center justify-between cursor-pointer active:scale-95 transition"><div className="flex items-center gap-3"><span className="text-2xl">❤️</span><div><h3 className="font-bold text-pink-800">Saved Questions</h3><p className="text-xs text-pink-600">{bookmarks.length} saved</p></div></div><span className="text-pink-400">➔</span></div>
           <h3 className="font-bold text-gray-700 mb-3 ml-1">Practice Mode</h3>
           <div className="grid grid-cols-2 gap-4">{exams.map(exam => { const progress = getExamProgress(exam.id); return (<div key={exam.id} onClick={() => { setSelectedExam(exam); setCurrentScreen('SUBJECT_SELECT') }} className="relative bg-white p-6 rounded-xl shadow border border-gray-100 flex flex-col items-center gap-3 active:scale-95 transition cursor-pointer overflow-hidden"><img src={exam.icon_url} className="w-12 h-12 object-contain" /><span className="font-bold text-gray-800 text-center">{exam.name}</span><div className="w-full h-1.5 bg-gray-100 rounded-full mt-1"><div className="h-full bg-blue-500 rounded-full transition-all duration-500" style={{width: `${progress}%`}}></div></div><span className="text-[10px] text-gray-400 font-bold">{progress}% Solved</span>{isAdmin && <button onClick={(e) => { e.stopPropagation(); setEditingExamId(exam.id); setNewExam({ name: exam.name, subjects: exam.subjects.join(','), existingIcon: exam.icon_url }); setShowExamManager(true) }} className="absolute top-1 right-1 text-gray-300 hover:text-blue-500">✏️</button>}</div>)})}</div>
         </div>
       )}
 
-      {/* 2. TEST SETUP (NEW ⏱️) */}
+      {/* 2. TEST SETUP */}
       {currentScreen === 'TEST_SETUP' && (
         <div className="p-4">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">Configure Test</h2>
-            
             <div className="space-y-4">
-                {/* EXAM SELECT */}
-                <div>
-                    <label className="block text-sm font-bold text-gray-500 mb-1">Select Exam</label>
-                    <select className="w-full p-3 rounded-lg bg-white border border-gray-200" value={testConfig.examId} 
-                      onChange={e => setTestConfig({...testConfig, examId: e.target.value, subject: 'All', chapter: 'All'})}>
-                        <option value="">-- Choose Exam --</option>
-                        {exams.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                    </select>
-                </div>
-
-                {/* SUBJECT SELECT */}
-                {testConfig.examId && (
-                    <div>
-                        <label className="block text-sm font-bold text-gray-500 mb-1">Select Subject</label>
-                        <select className="w-full p-3 rounded-lg bg-white border border-gray-200" value={testConfig.subject} 
-                          onChange={e => setTestConfig({...testConfig, subject: e.target.value, chapter: 'All'})}>
-                            <option value="All">All Subjects (Full Mock)</option>
-                            {exams.find(e => e.id == testConfig.examId)?.subjects.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                    </div>
-                )}
-
-                {/* CHAPTER SELECT */}
-                {testConfig.examId && (
-                    <div>
-                        <label className="block text-sm font-bold text-gray-500 mb-1">Select Chapter</label>
-                        <select className="w-full p-3 rounded-lg bg-white border border-gray-200" value={testConfig.chapter} 
-                          onChange={e => setTestConfig({...testConfig, chapter: e.target.value})}>
-                            <option value="All">All Chapters (Random)</option>
-                            {getAllChapters()
-                                .filter(c => questions.some(q => q.exam_id == testConfig.examId && (testConfig.subject === 'All' || q.subject === testConfig.subject) && q.chapter === c))
-                                .map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                    </div>
-                )}
-
-                {/* Q COUNT */}
-                <div>
-                     <label className="block text-sm font-bold text-gray-500 mb-1">Number of Questions</label>
-                     <div className="grid grid-cols-3 gap-2">
-                         {[10, 15, 20, 30].map(n => (
-                             <button key={n} onClick={() => setTestConfig({...testConfig, qCount: n})}
-                             className={`p-2 rounded border font-bold ${testConfig.qCount === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600'}`}>
-                                 {n} Qs
-                             </button>
-                         ))}
-                     </div>
-                </div>
+                <div><label className="block text-sm font-bold text-gray-500 mb-1">Select Exam</label><select className="w-full p-3 rounded-lg bg-white border border-gray-200" value={testConfig.examId} onChange={e => setTestConfig({...testConfig, examId: e.target.value, subject: 'All', chapter: 'All'})}><option value="">-- Choose Exam --</option>{exams.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select></div>
+                {testConfig.examId && (<div><label className="block text-sm font-bold text-gray-500 mb-1">Select Subject</label><select className="w-full p-3 rounded-lg bg-white border border-gray-200" value={testConfig.subject} onChange={e => setTestConfig({...testConfig, subject: e.target.value, chapter: 'All'})}><option value="All">All Subjects (Full Mock)</option>{exams.find(e => e.id == testConfig.examId)?.subjects.map(s => <option key={s} value={s}>{s}</option>)}</select></div>)}
+                {testConfig.examId && (<div><label className="block text-sm font-bold text-gray-500 mb-1">Select Chapter</label><select className="w-full p-3 rounded-lg bg-white border border-gray-200" value={testConfig.chapter} onChange={e => setTestConfig({...testConfig, chapter: e.target.value})}><option value="All">All Chapters (Random)</option>{getAllChapters().filter(c => questions.some(q => q.exam_id == testConfig.examId && (testConfig.subject === 'All' || q.subject === testConfig.subject) && q.chapter === c)).map(c => <option key={c} value={c}>{c}</option>)}</select></div>)}
+                <div><label className="block text-sm font-bold text-gray-500 mb-1">Number of Questions</label><div className="grid grid-cols-3 gap-2">{[10, 15, 20, 30].map(n => (<button key={n} onClick={() => setTestConfig({...testConfig, qCount: n})} className={`p-2 rounded border font-bold ${testConfig.qCount === n ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600'}`}>{n} Qs</button>))}</div></div>
             </div>
-
-            <div className="mt-8">
-                <button onClick={startTest} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg text-lg">
-                    Start Test 🚀
-                </button>
-                <p className="text-center text-xs text-gray-400 mt-2">Timer will be set to 2 mins per question.</p>
-            </div>
+            <div className="mt-8"><button onClick={startTest} className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold shadow-lg text-lg">Start Test 🚀</button><p className="text-center text-xs text-gray-400 mt-2">Timer will be set to 2 mins per question.</p></div>
         </div>
       )}
 
-      {/* 3. TEST ACTIVE (NEW ⏱️) */}
+      {/* 3. TEST ACTIVE */}
       {currentScreen === 'TEST_ACTIVE' && (
         <div className="p-4 pb-20">
-             {/* TIMER BAR */}
-             <div className="fixed top-16 left-0 right-0 bg-indigo-600 text-white p-2 text-center font-bold z-40 shadow-md">
-                 Time Left: {formatTime(testTimeLeft)}
-             </div>
-             
-             <div className="mt-10 grid gap-6">
-                 {testQuestions.map((q, i) => (
-                     <div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                         <div className="text-xs text-gray-400 font-bold mb-2">Question {i + 1} • {q.subject}</div>
-                         {q.image_url && <img src={q.image_url} alt="Diagram" className="rounded-lg w-full max-h-60 object-contain bg-gray-50 border mb-4" />}
-                         <h2 className="text-lg font-medium text-gray-800 mb-4 whitespace-pre-wrap">{q.question_text}</h2>
-                         
-                         {['A','B','C','D'].map(key => (
-                            <button key={key} onClick={() => setSelectedAnswers({...selectedAnswers, [q.id]: key})}
-                              className={`w-full text-left p-3 rounded-lg border mb-2 text-sm transition ${selectedAnswers[q.id] === key ? 'bg-indigo-100 border-indigo-500 text-indigo-900 font-bold' : 'hover:bg-gray-50'}`}>
-                              <span className="mr-2">{key}.</span> {q[`option_${key.toLowerCase()}`]}
-                            </button>
-                         ))}
-                     </div>
-                 ))}
-             </div>
-
-             <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 z-50">
-                 <button onClick={submitTest} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg">Submit Test ✅</button>
-             </div>
+             <div className="fixed top-16 left-0 right-0 bg-indigo-600 text-white p-2 text-center font-bold z-40 shadow-md">Time Left: {formatTime(testTimeLeft)}</div>
+             <div className="mt-10 grid gap-6">{testQuestions.map((q, i) => (<div key={q.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100"><div className="text-xs text-gray-400 font-bold mb-2">Question {i + 1} • {q.subject}</div>{q.image_url && <img src={q.image_url} alt="Diagram" className="rounded-lg w-full max-h-60 object-contain bg-gray-50 border mb-4" />}<h2 className="text-lg font-medium text-gray-800 mb-4 whitespace-pre-wrap">{q.question_text}</h2>{['A','B','C','D'].map(key => (<button key={key} onClick={() => setSelectedAnswers({...selectedAnswers, [q.id]: key})} className={`w-full text-left p-3 rounded-lg border mb-2 text-sm transition ${selectedAnswers[q.id] === key ? 'bg-indigo-100 border-indigo-500 text-indigo-900 font-bold' : 'hover:bg-gray-50'}`}><span className="mr-2">{key}.</span> {q[`option_${key.toLowerCase()}`]}</button>))}</div>))}</div>
+             <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 z-50"><button onClick={submitTest} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg">Submit Test ✅</button></div>
         </div>
       )}
 
-      {/* 4. TEST RESULT (NEW 📊) */}
+      {/* 4. TEST RESULT */}
       {currentScreen === 'TEST_RESULT' && testScore && (
           <div className="p-4">
-              <div className="bg-white rounded-2xl p-6 shadow border border-gray-100 text-center mb-6">
-                  <h2 className="text-gray-500 text-sm font-bold uppercase tracking-widest">Your Score</h2>
-                  <div className={`text-6xl font-black my-4 ${testScore.total > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {testScore.total} <span className="text-xl text-gray-400">/ {testScore.maxMarks}</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 mt-4 text-sm">
-                      <div className="bg-green-50 p-2 rounded text-green-700">✅ {testScore.correct} Correct</div>
-                      <div className="bg-red-50 p-2 rounded text-red-700">❌ {testScore.wrong} Wrong</div>
-                      <div className="bg-gray-50 p-2 rounded text-gray-600">⚪ {testScore.skipped} Skipped</div>
-                  </div>
-              </div>
-
-              <h3 className="font-bold text-gray-700 mb-3">Review Answers</h3>
-              <div className="grid gap-4">
-                  {testQuestions.map((q, i) => {
-                      const userAns = selectedAnswers[q.id]
-                      const isCorrect = userAns === q.correct_option
-                      const isSkipped = !userAns
-                      return (
-                        <div key={q.id} className={`p-5 rounded-xl shadow-sm border relative ${isCorrect ? 'bg-green-50 border-green-200' : isSkipped ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'}`}>
-                             <div className="mb-2 text-xs font-bold uppercase opacity-50">Q{i+1} • {isCorrect ? 'Correct (+4)' : isSkipped ? 'Skipped (0)' : 'Wrong (-1)'}</div>
-                             <h2 className="text-lg font-medium text-gray-800 mb-4">{q.question_text}</h2>
-                             
-                             {/* Show Correct Option */}
-                             <div className="text-sm p-2 bg-white/50 rounded border mb-2">
-                                 <span className="font-bold">Correct Answer:</span> {q.correct_option}. {q[`option_${q.correct_option.toLowerCase()}`]}
-                             </div>
-                             
-                             {/* Explanation */}
-                             {q.solution_text && (
-                                <details className="mt-2 text-sm text-gray-600"><summary className="cursor-pointer font-bold">Show Solution</summary><p className="mt-1">{q.solution_text}</p></details>
-                             )}
-                        </div>
-                      )
-                  })}
-              </div>
-
+              <div className="bg-white rounded-2xl p-6 shadow border border-gray-100 text-center mb-6"><h2 className="text-gray-500 text-sm font-bold uppercase tracking-widest">Your Score</h2><div className={`text-6xl font-black my-4 ${testScore.total > 0 ? 'text-green-600' : 'text-red-500'}`}>{testScore.total} <span className="text-xl text-gray-400">/ {testScore.maxMarks}</span></div><div className="grid grid-cols-3 gap-2 mt-4 text-sm"><div className="bg-green-50 p-2 rounded text-green-700">✅ {testScore.correct} Correct</div><div className="bg-red-50 p-2 rounded text-red-700">❌ {testScore.wrong} Wrong</div><div className="bg-gray-50 p-2 rounded text-gray-600">⚪ {testScore.skipped} Skipped</div></div></div>
+              <h3 className="font-bold text-gray-700 mb-3">Review Answers</h3><div className="grid gap-4">{testQuestions.map((q, i) => { const userAns = selectedAnswers[q.id]; const isCorrect = userAns === q.correct_option; const isSkipped = !userAns; return (<div key={q.id} className={`p-5 rounded-xl shadow-sm border relative ${isCorrect ? 'bg-green-50 border-green-200' : isSkipped ? 'bg-gray-50 border-gray-200' : 'bg-red-50 border-red-200'}`}><div className="mb-2 text-xs font-bold uppercase opacity-50">Q{i+1} • {isCorrect ? 'Correct (+4)' : isSkipped ? 'Skipped (0)' : 'Wrong (-1)'}</div><h2 className="text-lg font-medium text-gray-800 mb-4">{q.question_text}</h2><div className="text-sm p-2 bg-white/50 rounded border mb-2"><span className="font-bold">Correct Answer:</span> {q.correct_option}. {q[`option_${q.correct_option.toLowerCase()}`]}</div>{q.solution_text && (<details className="mt-2 text-sm text-gray-600"><summary className="cursor-pointer font-bold">Show Solution</summary><p className="mt-1">{q.solution_text}</p></details>)}</div>)})}</div>
               <button onClick={() => setCurrentScreen('HOME')} className="w-full bg-gray-800 text-white py-3 rounded-xl font-bold mt-6">Back to Home</button>
           </div>
       )}
 
-      {/* --- STANDARD SCREENS (PROFILE, SETTINGS, PRACTICE) --- */}
+      {/* 5. HISTORY SCREEN (NEW 📊) */}
+      {currentScreen === 'RESULTS_HISTORY' && (
+        <div className="p-4">
+            <h2 className="text-2xl font-bold text-gray-800 mb-6">Test History</h2>
+            {testHistory.length === 0 ? (
+                <div className="text-center py-10 text-gray-400"><p>No tests taken yet.</p></div>
+            ) : (
+                <div className="space-y-4">
+                    {/* AVERAGE SCORE CARD */}
+                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl flex justify-between items-center mb-6">
+                        <div><p className="text-xs text-indigo-500 font-bold uppercase">Average Score</p><p className="text-2xl font-black text-indigo-700">{Math.round(testHistory.reduce((a, b) => a + b.score, 0) / testHistory.length)}</p></div>
+                        <div><p className="text-xs text-indigo-500 font-bold uppercase">Tests Taken</p><p className="text-2xl font-black text-indigo-700">{testHistory.length}</p></div>
+                    </div>
+
+                    {/* HISTORY LIST */}
+                    {testHistory.map(test => (
+                        <div key={test.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+                            <div>
+                                <h3 className="font-bold text-gray-800">{test.exam_name}</h3>
+                                <p className="text-xs text-gray-400">{new Date(test.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className={`text-lg font-black ${test.score > 0 ? 'text-green-600' : 'text-red-500'}`}>{test.score}</p>
+                                <p className="text-xs text-gray-400">/ {test.max_marks}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+      )}
+
+      {/* --- STANDARD SCREENS (PROFILE, SETTINGS, ETC) --- */}
       {currentScreen === 'PROFILE' && user && ( <div className="p-4"><div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col items-center mb-6"><div className="w-24 h-24 rounded-full bg-blue-100 mb-4 p-1 border-4 border-white shadow-lg overflow-hidden">{user.user_metadata?.avatar_url ? <img src={user.user_metadata.avatar_url} className="w-full h-full object-cover rounded-full" /> : <span className="w-full h-full flex items-center justify-center text-3xl font-bold text-blue-600">{user.email[0].toUpperCase()}</span>}</div><h2 className="text-xl font-bold text-gray-900">{user.user_metadata?.full_name || 'Student'}</h2><p className="text-sm text-gray-500">{user.email}</p></div><h3 className="font-bold text-gray-700 mb-3">Your Stats</h3><div className="grid grid-cols-2 gap-3 mb-6"><div className="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center"><p className="text-3xl font-black text-blue-600">{solvedQs.length}</p><p className="text-xs text-gray-500 font-bold uppercase">Questions Solved</p></div><div className="bg-pink-50 p-4 rounded-xl border border-pink-100 text-center"><p className="text-3xl font-black text-pink-600">{bookmarks.length}</p><p className="text-xs text-gray-500 font-bold uppercase">Bookmarks</p></div></div></div> )}
       {currentScreen === 'SETTINGS' && ( <div className="p-4"><div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div className="p-4 border-b border-gray-100 flex justify-between items-center"><span className="font-medium text-gray-700">Dark Mode</span><button onClick={() => setDarkMode(!darkMode)} className={`w-12 h-6 rounded-full p-1 transition ${darkMode ? 'bg-blue-600' : 'bg-gray-200'}`}><div className={`w-4 h-4 bg-white rounded-full shadow transition transform ${darkMode ? 'translate-x-6' : ''}`}></div></button></div></div></div> )}
       {currentScreen === 'SUBJECT_SELECT' && ( <div className="p-4 space-y-3"><div className="mb-4"><h1 className="text-2xl font-bold text-gray-800">{selectedExam.name}</h1></div>{selectedExam.subjects.map(subject => (<div key={subject} onClick={() => { setSelectedSubject(subject); setCurrentScreen('CHAPTER_SELECT') }} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center active:bg-blue-50 cursor-pointer"><span className="font-bold text-gray-800">{subject}</span><span className="text-gray-300">➔</span></div>))}</div> )}
@@ -434,7 +360,6 @@ export default function App() {
       {/* ADMIN POPUPS */}
       {isAdmin && showExamManager && (<div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"><div className="bg-white w-full max-w-sm rounded-xl p-6 relative"><button onClick={() => setShowExamManager(false)} className="absolute top-4 right-4 text-gray-400">✕</button><h2 className="text-lg font-bold mb-4 text-purple-700">Exam</h2><input className="w-full bg-gray-100 p-2 rounded border mb-2" value={newExam.name} onChange={e => setNewExam({...newExam, name: e.target.value})} placeholder="Name"/><input className="w-full bg-gray-100 p-2 rounded border mb-2" value={newExam.subjects} onChange={e => setNewExam({...newExam, subjects: e.target.value})} placeholder="Subjects"/><input type="file" onChange={e => setNewExam({...newExam, iconFile: e.target.files[0]})} className="text-sm"/><button onClick={handleSaveExam} className="w-full bg-purple-600 text-white py-3 rounded font-bold mt-3">Save</button></div></div>)}
       {isAdmin && showAddQForm && (<div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"><div className="bg-white w-full max-w-md rounded-xl p-6 relative max-h-[90vh] overflow-y-auto"><button onClick={resetQForm} className="absolute top-4 right-4 text-gray-400">✕</button><h2 className="text-lg font-bold mb-4 text-blue-700">Add/Edit Q</h2><div className="space-y-3"><div className="grid grid-cols-2 gap-2"><select className="p-2 rounded bg-gray-100 border" value={newQ.exam_id} onChange={e => { const ex = exams.find(x => x.id == e.target.value); setNewQ({...newQ, exam_id: e.target.value, subject: ex?.subjects[0] || ''}) }}><option>Exam</option>{exams.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><select className="p-2 rounded bg-gray-100 border" value={newQ.subject} onChange={e => setNewQ({...newQ, subject: e.target.value})}>{exams.find(ex => ex.id == newQ.exam_id)?.subjects.map(s => <option key={s} value={s}>{s}</option>)}</select></div><div className="grid grid-cols-2 gap-2"><div><label className="text-xs font-bold text-gray-500">Chapter</label><input list="chapters-list" className="w-full bg-blue-50 p-2 rounded border" value={newQ.chapter} onChange={e => setNewQ({...newQ, chapter: e.target.value})}/><datalist id="chapters-list">{getAllChapters().map(c=><option key={c} value={c}/>)}</datalist></div><div><label className="text-xs font-bold text-gray-500">Year</label><input className="w-full bg-gray-100 p-2 rounded border" value={newQ.yearTag} onChange={e => setNewQ({...newQ, yearTag: e.target.value})}/></div></div><div><label className="text-xs font-bold text-gray-500">Image</label><input type="file" ref={questionImageRef} className="w-full text-sm" onChange={e => setNewQ({...newQ, imageFile: e.target.files[0]})}/></div><textarea className="w-full bg-gray-100 p-3 rounded border" rows="2" value={newQ.text} onChange={e => setNewQ({...newQ, text: e.target.value})}/><textarea className="w-full bg-green-50 p-3 rounded border border-green-200 text-sm" rows="3" value={newQ.solution} onChange={e => setNewQ({...newQ, solution: e.target.value})}/><div className="grid grid-cols-2 gap-2"><input className="bg-gray-100 p-2 rounded" placeholder="A" value={newQ.opA} onChange={e => setNewQ({...newQ, opA: e.target.value})}/><input className="bg-gray-100 p-2 rounded" placeholder="B" value={newQ.opB} onChange={e => setNewQ({...newQ, opB: e.target.value})}/><input className="bg-gray-100 p-2 rounded" placeholder="C" value={newQ.opC} onChange={e => setNewQ({...newQ, opC: e.target.value})}/><input className="bg-gray-100 p-2 rounded" placeholder="D" value={newQ.opD} onChange={e => setNewQ({...newQ, opD: e.target.value})}/></div><div className="grid grid-cols-2 gap-2"><select className="bg-gray-100 p-2 rounded" value={newQ.correct} onChange={e => setNewQ({...newQ, correct: e.target.value})}><option>A</option><option>B</option><option>C</option><option>D</option></select><select className="bg-gray-100 p-2 rounded" value={newQ.difficulty} onChange={e => setNewQ({...newQ, difficulty: e.target.value})}><option>Easy</option><option>Medium</option><option>Hard</option></select></div><button onClick={handleSaveQuestion} className="w-full bg-blue-600 text-white py-3 rounded font-bold">Save</button></div></div></div>)}
-
     </div>
   )
 }
