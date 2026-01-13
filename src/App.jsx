@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from './supabaseClient'
 import { motion, AnimatePresence } from "framer-motion"
-import Papa from 'papaparse' // <--- IMPORT THIS
 
 export default function App() {
   // --- STATE ---
@@ -31,14 +30,10 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false) 
   const [showAddQForm, setShowAddQForm] = useState(false) 
   const [showExamManager, setShowExamManager] = useState(false)
-  const [showFactManager, setShowFactManager] = useState(false)
-  const [showBulkUpload, setShowBulkUpload] = useState(false) // <--- NEW BULK STATE
-  const [bulkFile, setBulkFile] = useState(null)
-  const [isUploading, setIsUploading] = useState(false)
-
+  const [showFactManager, setShowFactManager] = useState(false) // New for "Morning Chai"
   const [newQ, setNewQ] = useState({ text: '', opA: '', opB: '', opC: '', opD: '', correct: 'A', exam_id: '', subject: '', chapter: '', difficulty: 'Easy', yearTag: '', solution: '', imageFile: null, existingImage: '' })
   const [newExam, setNewExam] = useState({ name: '', subjects: '', secretCode: '', iconFile: null, existingIcon: '' })
-  const [newFact, setNewFact] = useState({ title: '', description: '' })
+  const [newFact, setNewFact] = useState({ title: '', description: '' }) // New State for Fact
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -57,7 +52,7 @@ export default function App() {
 
     fetchExams()
     fetchQuestions()
-    fetchDailyFact()
+    fetchDailyFact() // <--- Fetch the Morning Chai!
 
     return () => subscription.unsubscribe()
   }, [])
@@ -84,40 +79,7 @@ export default function App() {
     setNewFact({ title: '', description: '' })
   }
 
-  const handleBulkUpload = () => {
-    if (!bulkFile) return alert("Please select a CSV file first!")
-    setIsUploading(true)
-    
-    Papa.parse(bulkFile, {
-        header: true,
-        skipEmptyLines: true,
-        complete: async (results) => {
-            const rows = results.data
-            // Validate first row
-            if(!rows[0].question_text || !rows[0].exam_id) {
-                setIsUploading(false)
-                return alert("Invalid CSV Format! Columns needed: question_text, option_a, option_b, option_c, option_d, correct_option, exam_id, subject, chapter, difficulty")
-            }
-
-            // Insert into Supabase
-            const { error } = await supabase.from('questions').insert(rows)
-            
-            setIsUploading(false)
-            if (error) alert("Upload Failed: " + error.message)
-            else {
-                alert(`Success! Uploaded ${rows.length} questions.`)
-                fetchQuestions()
-                setShowBulkUpload(false)
-            }
-        },
-        error: (err) => {
-            setIsUploading(false)
-            alert("CSV Error: " + err.message)
-        }
-    })
-  }
-
-  // (Existing Fetch Functions)
+  // (Existing Fetch Functions - Minimized for space)
   const loadLocalData = () => { setBookmarks(JSON.parse(localStorage.getItem('targetup_bookmarks') || '[]')) }
   const fetchUserData = async (uid) => {
     const { data: b } = await supabase.from('user_bookmarks').select('question_id').eq('user_id', uid)
@@ -139,7 +101,7 @@ export default function App() {
   }
   async function fetchQuestions() { const { data } = await supabase.from('questions').select('*').order('id', { ascending: false }); setQuestions(data || []) }
 
-  // (App Logic)
+  // (Existing Logic Functions)
   const startTest = () => { if (!testConfig.examId) return alert("Select Exam"); let pool = questions.filter(q => q.exam_id == testConfig.examId); if (testConfig.subject !== 'All') pool = pool.filter(q => q.subject === testConfig.subject); if (testConfig.chapter !== 'All') pool = pool.filter(q => q.chapter === testConfig.chapter); if (pool.length === 0) return alert("No questions!"); const shuffled = pool.sort(() => 0.5 - Math.random()).slice(0, testConfig.qCount); setTestQuestions(shuffled); setSelectedAnswers({}); setTestTimeLeft(shuffled.length * 120); setCurrentScreen('TEST_ACTIVE') }
   const submitTest = async () => { let correct = 0; testQuestions.forEach(q => { if (selectedAnswers[q.id] === q.correct_option) correct++ }); setTestScore({ total: correct * 4, maxMarks: testQuestions.length * 4 }); setCurrentScreen('TEST_RESULT') }
   const handleAuth = async () => { const { error } = authForm.isLogin ? await supabase.auth.signInWithPassword(authForm) : await supabase.auth.signUp(authForm); if (error) alert(error.message); else setShowAuthModal(false) }
@@ -162,21 +124,13 @@ export default function App() {
         <div className="flex gap-3 items-center">
           <button onClick={() => user ? setShowProfileMenu(!showProfileMenu) : setShowAuthModal(true)} className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 border border-blue-200">{user ? user.email[0].toUpperCase() : '👤'}</button>
           {showProfileMenu && user && (<div className="absolute top-14 right-4 bg-white p-2 shadow-xl border rounded-xl z-50 w-48"><button onClick={() => {setCurrentScreen('PROFILE'); setShowProfileMenu(false)}} className="w-full text-left p-2 hover:bg-gray-50 rounded">Profile</button><button onClick={handleLogout} className="w-full text-left p-2 text-red-500 hover:bg-red-50 rounded">Logout</button></div>)}
-          {isAdmin ? (
-  <button onClick={() => { 
-      setIsAdmin(false); 
-      localStorage.removeItem('targetup_admin_logged_in'); // <--- THIS FIXES IT
-  }} className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded">
-    Exit Admin
-  </button>
-) : (<button onClick={() => { if(prompt("Password:") === "@Nextmove7388##===") { setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') } }} className="text-gray-300">🔒</button>)}
+          {isAdmin ? (<button onClick={() => setIsAdmin(false)} className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded">Exit Admin</button>) : (<button onClick={() => { if(prompt("Password:") === "@Nextmove7388##===") { setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') } }} className="text-gray-300">🔒</button>)}
         </div>
       </div>
 
       {/* ADMIN FLOATING BUTTONS */}
       {isAdmin && (
         <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
-           <button onClick={() => setShowBulkUpload(true)} className="bg-green-600 text-white p-3 rounded-full shadow-lg font-bold">📤</button>
            <button onClick={() => setShowFactManager(true)} className="bg-orange-500 text-white p-3 rounded-full shadow-lg font-bold">☕</button>
            <button onClick={() => setShowExamManager(true)} className="bg-purple-600 text-white p-3 rounded-full shadow-lg font-bold">🏛️</button>
            <button onClick={() => setShowAddQForm(true)} className="bg-blue-600 text-white p-3 rounded-full shadow-lg font-bold">+Q</button>
@@ -186,6 +140,8 @@ export default function App() {
       {/* --- SCREENS --- */}
       {currentScreen === 'HOME' && (
         <div className="p-4 space-y-6">
+          
+          {/* ☕ MORNING CHAI CARD (New Feature) */}
           {dailyFact && (
              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-gradient-to-br from-orange-50 to-amber-50 border border-orange-100 p-5 rounded-2xl shadow-sm relative overflow-hidden">
                 <div className="absolute -right-4 -top-4 text-8xl opacity-10">☕</div>
@@ -200,6 +156,7 @@ export default function App() {
              </motion.div>
           )}
 
+          {/* EXAM CARDS */}
           <div>
             <h3 className="font-bold text-gray-700 mb-3">Your Exams</h3>
             <div className="grid grid-cols-2 gap-4">
@@ -225,6 +182,7 @@ export default function App() {
          <div className="p-4">
             <h2 className="text-2xl font-bold mb-6">Profile</h2>
             <div className="bg-white p-6 rounded-xl shadow-sm border text-center mb-6"><div className="w-20 h-20 bg-blue-100 rounded-full mx-auto flex items-center justify-center text-2xl font-bold text-blue-600 mb-3">{user?.email[0].toUpperCase()}</div><h3 className="font-bold">{user?.email}</h3></div>
+            {/* Join Batch UI */}
             <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
                <h3 className="font-bold text-blue-900 mb-2">🔐 Join Private Batch</h3>
                <div className="flex gap-2">
@@ -257,56 +215,7 @@ export default function App() {
         </div>
       )}
 
-      {/* BULK UPLOAD POPUP (New) */}
-      {showBulkUpload && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-sm rounded-xl p-6">
-            <h2 className="text-xl font-bold text-green-700 mb-4">Bulk Upload (CSV)</h2>
-            <p className="text-sm text-gray-500 mb-4">Upload an Excel/CSV file with columns: <b>question_text, option_a... exam_id</b></p>
-            <input type="file" accept=".csv" onChange={e => setBulkFile(e.target.files[0])} className="mb-4 text-sm"/>
-            <button onClick={handleBulkUpload} disabled={isUploading} className="w-full bg-green-600 text-white py-3 rounded font-bold shadow-lg">
-                {isUploading ? 'Uploading...' : 'Upload Questions 📤'}
-            </button>
-            <button onClick={() => setShowBulkUpload(false)} className="w-full mt-2 text-gray-400 text-sm">Cancel</button>
-          </div>
-        </div>
-      )}
-
-{showAuthModal && (
-  <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
-    <div className="bg-white w-full max-w-sm rounded-xl p-6">
-      <h2 className="text-xl font-bold mb-4">{authForm.isLogin ? 'Login' : 'Sign Up'}</h2>
-      
-      {/* GOOGLE LOGIN BUTTON (Restored) */}
-      <button 
-        onClick={async () => {
-          const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
-          if(error) alert(error.message);
-        }}
-        className="w-full bg-white border border-gray-300 text-gray-700 p-3 rounded font-bold mb-4 flex items-center justify-center gap-2"
-      >
-        <span>🇬</span> Continue with Google
-      </button>
-
-      <div className="flex items-center gap-2 mb-4">
-        <div className="h-px bg-gray-200 flex-1"></div>
-        <span className="text-gray-400 text-xs">OR</span>
-        <div className="h-px bg-gray-200 flex-1"></div>
-      </div>
-
-      <input className="w-full p-2 border mb-2 rounded" placeholder="Email" value={authForm.email} onChange={e=>setAuthForm({...authForm, email:e.target.value})}/>
-      <input className="w-full p-2 border mb-4 rounded" type="password" placeholder="Password" value={authForm.password} onChange={e=>setAuthForm({...authForm, password:e.target.value})}/>
-      
-      <button onClick={handleAuth} className="w-full bg-blue-600 text-white p-3 rounded font-bold">
-        {authForm.isLogin ? 'Login' : 'Sign Up'}
-      </button>
-      
-      <p onClick={()=>setAuthForm({...authForm, isLogin:!authForm.isLogin})} className="text-center mt-4 text-blue-500 cursor-pointer">
-        Switch to {authForm.isLogin ? 'Sign Up' : 'Login'}
-      </p>
-      <button onClick={()=>setShowAuthModal(false)} className="absolute top-4 right-4 text-gray-400">✕</button>
+      {showAuthModal && (<div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"><div className="bg-white w-full max-w-sm rounded-xl p-6"><h2 className="text-xl font-bold mb-4">{authForm.isLogin ? 'Login' : 'Sign Up'}</h2><input className="w-full p-2 border mb-2" placeholder="Email" value={authForm.email} onChange={e=>setAuthForm({...authForm, email:e.target.value})}/><input className="w-full p-2 border mb-4" type="password" placeholder="Password" value={authForm.password} onChange={e=>setAuthForm({...authForm, password:e.target.value})}/><button onClick={handleAuth} className="w-full bg-blue-600 text-white p-3 rounded font-bold">{authForm.isLogin ? 'Login' : 'Sign Up'}</button><p onClick={()=>setAuthForm({...authForm, isLogin:!authForm.isLogin})} className="text-center mt-4 text-blue-500 cursor-pointer">Switch to {authForm.isLogin ? 'Sign Up' : 'Login'}</p><button onClick={()=>setShowAuthModal(false)} className="absolute top-4 right-4">✕</button></div></div>)}
     </div>
-    </div>
-  )}
-  </div>
-)}
+  )
+}
