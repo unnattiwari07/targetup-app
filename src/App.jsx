@@ -162,7 +162,14 @@ export default function App() {
         <div className="flex gap-3 items-center">
           <button onClick={() => user ? setShowProfileMenu(!showProfileMenu) : setShowAuthModal(true)} className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 border border-blue-200">{user ? user.email[0].toUpperCase() : '👤'}</button>
           {showProfileMenu && user && (<div className="absolute top-14 right-4 bg-white p-2 shadow-xl border rounded-xl z-50 w-48"><button onClick={() => {setCurrentScreen('PROFILE'); setShowProfileMenu(false)}} className="w-full text-left p-2 hover:bg-gray-50 rounded">Profile</button><button onClick={handleLogout} className="w-full text-left p-2 text-red-500 hover:bg-red-50 rounded">Logout</button></div>)}
-          {isAdmin ? (<button onClick={() => setIsAdmin(false)} className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded">Exit Admin</button>) : (<button onClick={() => { if(prompt("Password:") === "@Nextmove7388##===") { setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') } }} className="text-gray-300">🔒</button>)}
+          {isAdmin ? (
+  <button onClick={() => { 
+      setIsAdmin(false); 
+      localStorage.removeItem('targetup_admin_logged_in'); // <--- THIS FIXES IT
+  }} className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded">
+    Exit Admin
+  </button>
+) : (<button onClick={() => { if(prompt("Password:") === "@Nextmove7388##===") { setIsAdmin(true); localStorage.setItem('targetup_admin_logged_in','true') } }} className="text-gray-300">🔒</button>)}
         </div>
       </div>
 
@@ -265,7 +272,41 @@ export default function App() {
         </div>
       )}
 
-      {showAuthModal && (<div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"><div className="bg-white w-full max-w-sm rounded-xl p-6"><h2 className="text-xl font-bold mb-4">{authForm.isLogin ? 'Login' : 'Sign Up'}</h2><input className="w-full p-2 border mb-2" placeholder="Email" value={authForm.email} onChange={e=>setAuthForm({...authForm, email:e.target.value})}/><input className="w-full p-2 border mb-4" type="password" placeholder="Password" value={authForm.password} onChange={e=>setAuthForm({...authForm, password:e.target.value})}/><button onClick={handleAuth} className="w-full bg-blue-600 text-white p-3 rounded font-bold">{authForm.isLogin ? 'Login' : 'Sign Up'}</button><p onClick={()=>setAuthForm({...authForm, isLogin:!authForm.isLogin})} className="text-center mt-4 text-blue-500 cursor-pointer">Switch to {authForm.isLogin ? 'Sign Up' : 'Login'}</p><button onClick={()=>setShowAuthModal(false)} className="absolute top-4 right-4">✕</button></div></div>)}
+{showAuthModal && (
+  <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+    <div className="bg-white w-full max-w-sm rounded-xl p-6">
+      <h2 className="text-xl font-bold mb-4">{authForm.isLogin ? 'Login' : 'Sign Up'}</h2>
+      
+      {/* GOOGLE LOGIN BUTTON (Restored) */}
+      <button 
+        onClick={async () => {
+          const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+          if(error) alert(error.message);
+        }}
+        className="w-full bg-white border border-gray-300 text-gray-700 p-3 rounded font-bold mb-4 flex items-center justify-center gap-2"
+      >
+        <span>🇬</span> Continue with Google
+      </button>
+
+      <div className="flex items-center gap-2 mb-4">
+        <div className="h-px bg-gray-200 flex-1"></div>
+        <span className="text-gray-400 text-xs">OR</span>
+        <div className="h-px bg-gray-200 flex-1"></div>
+      </div>
+
+      <input className="w-full p-2 border mb-2 rounded" placeholder="Email" value={authForm.email} onChange={e=>setAuthForm({...authForm, email:e.target.value})}/>
+      <input className="w-full p-2 border mb-4 rounded" type="password" placeholder="Password" value={authForm.password} onChange={e=>setAuthForm({...authForm, password:e.target.value})}/>
+      
+      <button onClick={handleAuth} className="w-full bg-blue-600 text-white p-3 rounded font-bold">
+        {authForm.isLogin ? 'Login' : 'Sign Up'}
+      </button>
+      
+      <p onClick={()=>setAuthForm({...authForm, isLogin:!authForm.isLogin})} className="text-center mt-4 text-blue-500 cursor-pointer">
+        Switch to {authForm.isLogin ? 'Sign Up' : 'Login'}
+      </p>
+      <button onClick={()=>setShowAuthModal(false)} className="absolute top-4 right-4 text-gray-400">✕</button>
     </div>
-  )
-}
+    </div>
+  )}
+  </div>
+)}
